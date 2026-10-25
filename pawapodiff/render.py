@@ -21,32 +21,74 @@ def render(path, destination, width=3840):
     import win32process
     import psutil
 
-    pythoncom.CoInitialize()
+    return _render_powerpoint(
+        path,
+        destination,
+        width,
+        com=pythoncom,
+        client=win32com.client,
+        process_api=win32process,
+        processes=psutil,
+    )
+
+
+def _error_detail(error):
+    """Surface actionable COM diagnostics locally, without losing the original stage."""
+    details = []
+    hresult = getattr(error, "hresult", None)
+    if isinstance(hresult, int):
+        details.append(f"HRESULT 0x{hresult & 0xFFFFFFFF:08X}")
+    info = getattr(error, "excepinfo", None)
+    if info:
+        if len(info) > 2 and info[2]:
+            details.append(str(info[2]).strip())
+        if len(info) > 5 and isinstance(info[5], int) and info[5]:
+            details.append(f"Office 0x{info[5] & 0xFFFFFFFF:08X}")
+    if not details:
+        details.append(f"{type(error).__name__}: {error}")
+    return " / ".join(details)[:700]
+
+
+def _render_powerpoint(
+    path, destination, width, *, com, client, process_api, processes
+):
+    # Office MsoTriState is an enum, not VARIANT_BOOL: True may marshal as the
+    # unsupported value msoCTrue (1). Pass msoTrue (-1) and msoFalse (0) explicitly.
+    # Positional arguments also support late-bound COM without generated wrappers.
+    mso_true, mso_false = -1, 0
+    com.CoInitialize()
     app = presentation = None
-    existing = {
-        p.pid
-        for p in psutil.process_iter(["name"])
-        if (p.info["name"] or "").lower() == "powerpnt.exe"
-    }
     owned = False
+    stage = "既存のPowerPointプロセスの確認"
     try:
-        try:
-            app = win32com.client.DispatchEx("PowerPoint.Application")
-        except Exception as e:
+        existing = {
+            p.pid
+            for p in processes.process_iter(["name"])
+            if (p.info["name"] or "").lower() == "powerpnt.exe"
+        }
+        stage = "PowerPointの起動"
+        app = client.DispatchEx("PowerPoint.Application")
+        stage = "PowerPointプロセスの所有権確認"
+        _, pid = process_api.GetWindowThreadProcessId(app.HWND)
+        if not pid:
             raise RenderError(
-                "PowerPointを起動できません。Windows版PowerPointの導入と初回起動を確認してください。"
-            ) from e
-        _, pid = win32process.GetWindowThreadProcessId(app.HWND)
+                "PowerPointのプロセスを特定できないため、安全のため中断しました。"
+            )
         owned = pid not in existing
         if not owned:
             raise RenderError(
                 "PowerPointが既存プロセスを共有したため、安全のため中断しました。開いている資料を保存してPowerPointを終了し、再試行してください。"
             )
+        stage = "PowerPointの安全設定"
         app.AutomationSecurity = 3  # msoAutomationSecurityForceDisable
         app.DisplayAlerts = 1  # ppAlertsNone
+        stage = "PowerPointの表示設定"
+        app.Visible = mso_true
+        stage = "資料を読み取り専用で開く"
         presentation = app.Presentations.Open(
-            str(Path(path).resolve()), ReadOnly=True, Untitled=False, WithWindow=False
+            str(Path(path).resolve()), mso_true, mso_false, mso_false
         )
+        stage = "出力先とスライド寸法の確認"
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=True)
         height = round(
@@ -54,29 +96,43 @@ def render(path, destination, width=3840):
             * presentation.PageSetup.SlideHeight
             / presentation.PageSetup.SlideWidth
         )
+        paths = []
         for i in range(1, presentation.Slides.Count + 1):
+            stage = f"スライド{i}のPNG出力"
             target = destination / f"{i:04}.png"
-            presentation.Slides(i).Export(str(target.resolve()), "PNG", width, height)
-            with Image.open(target) as im:
-                if im.width != width or im.height != height:
-                    raise RenderError("PowerPointの出力解像度が要求と一致しません。")
-        return sorted(destination.glob("*.png"))
+            presentation.Slides.Item(i).Export(
+                str(target.resolve()), "PNG", width, height
+            )
+            stage = f"スライド{i}の出力画像の確認"
+            with Image.open(target) as image:
+                if image.size != (width, height):
+                    raise RenderError(
+                        f"PowerPointの出力解像度が要求と一致しません（スライド{i}：要求{width}×{height}、実際{image.width}×{image.height}）。"
+                    )
+            paths.append(target)
+        return paths
     except RenderError:
         raise
-    except Exception as e:
+    except Exception as error:
         raise RenderError(
-            "PowerPointのスライド描画に失敗しました。資料を手動で開けるか確認してください。"
-        ) from e
+            f"PowerPointの処理に失敗しました（{stage}）。{_error_detail(error)}"
+        ) from error
     finally:
-        try:
-            if presentation is not None:
-                presentation.Close()
-        finally:
-            try:
-                if app is not None and owned:
-                    app.Quit()
-            finally:
-                pythoncom.CoUninitialize()
+        # A Close/Quit failure must not replace a useful Open/Export exception.
+        import logging
+
+        for label, obj, method in (
+            ("Presentation.Close", presentation, "Close"),
+            ("Application.Quit", app if owned else None, "Quit"),
+        ):
+            if obj is not None:
+                try:
+                    getattr(obj, method)()
+                except Exception as error:
+                    logging.getLogger(__name__).warning(
+                        "%s: %s", label, _error_detail(error)
+                    )
+        com.CoUninitialize()
 
 
 def export_images(paths, destination, preset="FHD", crop=None, width=1920):

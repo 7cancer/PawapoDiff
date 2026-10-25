@@ -58,12 +58,16 @@ def install(payload, expected_digest, base):
     try:
         with ZipFile(payload) as archive:
             for entry in archive.infolist():
-                name = PurePosixPath(entry.filename)
+                # ZipInfo.filename normalizes backslashes on Windows. Validate
+                # the original archive name before that platform-specific rewrite.
+                raw_name = entry.orig_filename
+                name = PurePosixPath(raw_name)
                 if (
                     name.is_absolute()
                     or ".." in name.parts
-                    or "\\" in entry.filename
-                    or ":" in entry.filename
+                    or "\\" in raw_name
+                    or ":" in raw_name
+                    or "\x00" in raw_name
                     or not name.parts
                     or (entry.external_attr >> 16) & 0o170000 == 0o120000
                 ):

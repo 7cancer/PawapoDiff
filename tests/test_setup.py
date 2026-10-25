@@ -1,6 +1,5 @@
 import hashlib
-from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 import pytest
 
@@ -12,7 +11,11 @@ def archive(tmp_path, entries):
     path = tmp_path / "payload.zip"
     with ZipFile(path, "w") as z:
         for name, content in entries.items():
-            z.writestr(name, content)
+            # Writing a string filename normalizes backslashes on Windows.
+            # Preserve the raw name so malformed fixtures are identical on all OSes.
+            info = ZipInfo(name)
+            info.filename = name
+            z.writestr(info, content)
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -45,6 +48,8 @@ def test_failed_verification_does_not_install(tmp_path):
 )
 def test_path_traversal_is_rejected(tmp_path, bad_path):
     payload, digest = archive(tmp_path, {"PawapoDiff.exe": "app", bad_path: "bad"})
+    with ZipFile(payload) as z:
+        assert z.infolist()[-1].orig_filename == bad_path
     with pytest.raises(SetupError, match="Unsafe"):
         install(payload, digest, tmp_path / "local")
     assert not list((tmp_path / "local/versions").iterdir())
@@ -59,3 +64,21 @@ def test_missing_executable_and_incomplete_install_are_reported(tmp_path):
     (tmp_path / "local/versions" / digest).mkdir()
     with pytest.raises(SetupError, match="incomplete"):
         install(payload, digest, tmp_path / "local")
+
+
+def test_windows_filename_normalization_cannot_hide_backslashes(tmp_path, monkeypatch):
+    payload, digest = archive(tmp_path, {"PawapoDiff.exe": "app", "a\\outside": "bad"})
+    original_init = ZipInfo.__init__
+
+    def windows_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.filename = self.filename.replace("\\", "/")
+
+    # Reproduce the Windows reader behavior even when this test runs on Linux.
+    monkeypatch.setattr(ZipInfo, "__init__", windows_init)
+    with ZipFile(payload) as z:
+        assert z.infolist()[-1].filename == "a/outside"
+        assert z.infolist()[-1].orig_filename == "a\\outside"
+    with pytest.raises(SetupError, match="Unsafe"):
+        install(payload, digest, tmp_path / "local")
+    assert not list((tmp_path / "local/versions").iterdir())

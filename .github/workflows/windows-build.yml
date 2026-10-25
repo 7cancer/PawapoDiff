@@ -1,0 +1,52 @@
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build and test offline installer
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Verify first install, repeat install, and packaged runtime
+        shell: pwsh
+        run: |
+          & ./dist/PawapoDiff-Setup.exe --install-only
+          if ($LASTEXITCODE) { throw 'First installation failed' }
+          & ./dist/PawapoDiff-Setup.exe --install-only
+          if ($LASTEXITCODE) { throw 'Repeat installation failed' }
+          $digest = (Get-Content build/setup-payload/payload.json | ConvertFrom-Json).sha256
+          $app = Join-Path $env:LOCALAPPDATA "PawapoDiff/versions/$digest/PawapoDiff.exe"
+          & $app --check-runtime
+          if ($LASTEXITCODE) { throw 'Packaged runtime verification failed' }
+      - name: Record installer checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/PawapoDiff-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  PawapoDiff-Setup.exe" | Set-Content dist/PawapoDiff-Setup.exe.sha256 -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PawapoDiff-Windows-Setup
+          path: |
+            dist/PawapoDiff-Setup.exe
+            dist/PawapoDiff-Setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 30

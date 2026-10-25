@@ -10,7 +10,8 @@
 - 必要な環境はEXEに同梱するため、導入・使用時ともインターネット接続は不要です。**PowerPoint本体の導入・ライセンス認証は別途必要です。**
 - 不要になった場合はアプリを終了後、上記のPawapoDiffフォルダーとスタートメニューのショートカットを削除してください。自動更新は行いません。
 - 終了は起動したコンソールで **Ctrl+C**。ブラウザを閉じるだけではサーバーは終了しません。通常終了時に一時ファイルを削除します。強制終了時はOSの一時フォルダーに `PawapoDiff-*` が残る場合があります。
-- インストーラーはGitHubの [Actions → Windows installer](https://github.com/7cancer/PawapoDiff/actions/workflows/windows-build.yml) の成功した実行から、Artifactsの **PawapoDiff-Windows-Setup** をダウンロードし、ZIPを展開して取り出せます（GitHubへのログインが必要です）。mainへのPushで自動ビルドします。
+- **[GitHub Releases](https://github.com/7cancer/PawapoDiff/releases) から公開版の `PawapoDiff-Setup.exe` をダウンロードできます。** リリースページ下部のAssetsにあるEXEを選んでください。`Source code` のZIPにはEXEは含まれません。
+- 開発ビルドは [Actions → Windows installer](https://github.com/7cancer/PawapoDiff/actions/workflows/windows-build.yml) の成功した実行のArtifactsからも取得できます。こちらはZIPの展開とGitHubへのログインが必要です。
 - ソースのZIPにはビルド済みEXEは含みません。手元で生成する場合は下記のWindowsビルド手順を使います。
 
 ## 使い方
@@ -79,3 +80,7 @@ Linux上で解析・API・画像出力のpytest、TypeScript型チェック、Vi
 - PowerPoint未導入、破損・暗号化・ページ数不一致・寸法不一致時のメッセージと、正常終了後の一時データ削除。
 
 MIT License。
+
+### リリースの公開
+
+`v*` タグのPushでWindowsビルド・テスト・導入検証が実行されます。すべて成功した場合に、EXEとSHA-256を添付したGitHubのプレリリースを公開します。公開前に `RELEASE_NOTES.md` を更新してください。PowerPoint実機検証が未完了のため、初期版はPreviewとして扱います。

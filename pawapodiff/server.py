@@ -1,4 +1,3 @@
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -9,13 +8,14 @@ import shutil
 import tempfile
 import threading
 from zipfile import ZipFile, ZIP_DEFLATED
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageChops, ImageEnhance
 from pydantic import BaseModel, Field
 from .engine import inspect, compare, InputError
-from .render import render, export_images, RenderError
+from .render import render, RenderError
+from .uploads import receive_presentations
 from .report import report
 
 
@@ -27,13 +27,6 @@ class Job:
     documents: dict = field(default_factory=dict)
     images: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
-
-
-class ExportRequest(BaseModel):
-    side: str = "left"
-    preset: str = "FHD"
-    crop: list[float] | None = None
-    width: int = Field(default=1920, ge=64, le=7680)
 
 
 class ThresholdRequest(BaseModel):
@@ -126,18 +119,6 @@ def create_app(token=None, root=None, renderer=render):
                 "処理に失敗しました。ファイル形式と空き容量を確認してください。",
             )
 
-    async def save_upload(upload, dest):
-        if not upload.filename or not upload.filename.lower().endswith(".pptx"):
-            raise HTTPException(422, "pptxファイルを選択してください。")
-        size = 0
-        with dest.open("wb") as f:
-            while chunk := await upload.read(1024 * 1024):
-                size += len(chunk)
-                if size > 800 * 1024**2:
-                    raise HTTPException(413, "1ファイルの上限は800MBです。")
-                f.write(chunk)
-        await upload.close()
-
     @app.get("/api/diagnostics")
     def diagnostics():
         from .diagnostics import diagnostic_files
@@ -157,26 +138,16 @@ def create_app(token=None, root=None, renderer=render):
         )
 
     @app.post("/api/jobs")
-    async def new_job(
-        left: UploadFile = File(...),
-        right: UploadFile | None = File(None),
-        threshold: float = Form(1),
-    ):
-        if not 0 <= threshold <= 100:
-            raise HTTPException(422, "閾値は0〜100ptです。")
+    async def new_job(request: Request):
         key = secrets.token_hex(12)
         directory = work / key
         directory.mkdir()
         try:
-            await save_upload(left, directory / "left.pptx")
-            documents = {"left": {}}
-            if right is not None:
-                await save_upload(right, directory / "right.pptx")
-                documents["right"] = {}
-        except Exception:
+            threshold = await receive_presentations(request, directory)
+        except BaseException:
             shutil.rmtree(directory, ignore_errors=True)
             raise
-        jobs[key] = Job(documents=documents)
+        jobs[key] = Job(documents={"left": {}, "right": {}})
         pool.submit(process, key, threshold)
         return {"id": key}
 
@@ -231,34 +202,6 @@ def create_app(token=None, root=None, renderer=render):
                 "Content-Disposition": 'attachment; filename="PawapoDiff-report.html"'
             },
         )
-
-    @app.post("/api/jobs/{key}/export")
-    async def export(key: str, body: ExportRequest):
-        job = get_job(key)
-        if body.side not in job.images or body.preset not in (
-            "HD",
-            "FHD",
-            "4K",
-            "custom",
-        ):
-            raise HTTPException(422, "出力設定が不正です。")
-
-        def run():
-            exportdir = work / key / secrets.token_hex(8)
-            try:
-                files = export_images(
-                    job.images[body.side], exportdir, body.preset, body.crop, body.width
-                )
-                archive = exportdir.with_suffix(".zip")
-                with ZipFile(archive, "w") as z:
-                    for file in files:
-                        z.write(file, file.name)
-                return archive
-            except InputError as e:
-                raise HTTPException(422, str(e)) from e
-
-        path = await asyncio.get_running_loop().run_in_executor(pool, run)
-        return FileResponse(path, filename="PawapoDiff-images.zip")
 
     import sys
 

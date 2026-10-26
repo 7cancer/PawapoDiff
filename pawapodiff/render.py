@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 from PIL import Image
-from .engine import InputError, validate
+from .engine import validate
 
 logger = logging.getLogger(__name__)
 
@@ -314,50 +314,3 @@ def _render_powerpoint(
     if failure:
         raise failure
     return paths
-
-
-def export_images(paths, destination, preset="FHD", crop=None, width=1920):
-    bounds = {"HD": (1280, 720), "FHD": (1920, 1080), "4K": (3840, 2160)}
-    destination = Path(destination)
-    destination.mkdir(parents=True, exist_ok=True)
-    outputs = []
-    for i, path in enumerate(paths, 1):
-        with Image.open(path) as image:
-            if preset == "custom":
-                if not crop or len(crop) != 4:
-                    raise InputError("切り抜き範囲を指定してください。")
-                x, y, w, h = crop
-                if not (
-                    0 <= x < 1
-                    and 0 <= y < 1
-                    and w > 0
-                    and h > 0
-                    and x + w <= 1.000001
-                    and y + h <= 1.000001
-                ):
-                    raise InputError("切り抜き範囲が画像外です。")
-                box = (
-                    round(x * image.width),
-                    round(y * image.height),
-                    round((x + w) * image.width),
-                    round((y + h) * image.height),
-                )
-                if box[2] <= box[0] or box[3] <= box[1]:
-                    raise InputError("切り抜き範囲が小さすぎます。")
-                image = image.crop(box)
-                size = (width, max(1, round(width * image.height / image.width)))
-                if size[0] * size[1] > 40_000_000:
-                    raise InputError(
-                        "出力サイズが大きすぎます。範囲または幅を変更してください。"
-                    )
-            else:
-                bw, bh = bounds[preset]
-                ratio = min(bw / image.width, bh / image.height)
-                size = (
-                    max(1, round(image.width * ratio)),
-                    max(1, round(image.height * ratio)),
-                )
-            out = destination / f"{i:04}.png"
-            image.resize(size, Image.Resampling.LANCZOS).save(out)
-            outputs.append(out)
-    return outputs

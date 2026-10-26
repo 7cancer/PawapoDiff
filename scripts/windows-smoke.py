@@ -7,9 +7,8 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from PIL import Image
 from pawapodiff.engine import inspect, compare
-from pawapodiff.render import render, export_images
+from pawapodiff.render import render
 from pawapodiff.report import report
 
 
@@ -39,24 +38,12 @@ def main():
         }
         assert all(len(paths) == 2 for paths in images.values())
         assert any(i["kind"] == "表記揺れ候補" for i in result["issues"])
-        for preset, size in [
-            ("HD", (1280, 720)),
-            ("FHD", (1920, 1080)),
-            ("4K", (3840, 2160)),
-        ]:
-            paths = export_images(images["left"], root / preset, preset)
-            assert len(paths) == 2
-            with Image.open(paths[0]) as im:
-                assert im.size == size, (preset, im.size)
-        paths = export_images(
-            images["left"], root / "crop", "custom", [0, 0, 1, 0.8], 1920
-        )
-        with Image.open(paths[0]) as im:
-            assert im.size == (1920, 864)
+        assert len(result["translations"]) == 2
+        assert all(row["inconsistent"] for row in result["translations"])
         html = report(result, images)
         assert html.count("data:image/png;base64,") == 4
         print(
-            "PASS: PowerPoint rendering, comparison, PNG resolutions/crop, embedded HTML."
+            "PASS: PowerPoint rendering, comparison, translation table, embedded HTML."
         )
         print(
             "Packaged EXE and existing PowerPoint process behavior still need the README manual checks."

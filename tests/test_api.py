@@ -5,7 +5,7 @@ import time
 from pawapodiff.server import create_app
 
 
-def test_job_export_report_and_security(tmp_path):
+def test_job_report_and_security(tmp_path):
     p = Presentation()
     s = p.slides.add_slide(p.slide_layouts[6])
     s.shapes.add_textbox(0, 0, 100000, 100000).text = "日本語"
@@ -70,26 +70,13 @@ def test_job_export_report_and_security(tmp_path):
             b"data:image/png;base64,"
             in c.get(f"/api/jobs/{key}/report", headers=h).content
         )
-        assert c.post(
-            f"/api/jobs/{key}/export", headers=h, json={"preset": "HD"}
-        ).content.startswith(b"PK")
-        assert (
-            c.post(
-                f"/api/jobs/{key}/export",
-                headers=h,
-                json={"preset": "custom", "crop": [0, 0, 0, 1]},
-            ).status_code
-            == 422
-        )
+        assert status["result"]["translations"][0]["source"] == "日本語"
         response = c.post("/api/jobs", headers=h, files={"left": ("a.pptx", data)})
-        key = response.json()["id"]
-        for _ in range(100):
-            status = c.get(f"/api/jobs/{key}", headers=h).json()
-            if status["status"] in ("done", "error"):
-                break
-            time.sleep(0.02)
-        assert status["status"] == "done" and status["result"] is None
-        assert c.get(f"/api/jobs/{key}/report", headers=h).status_code == 422
+        assert response.status_code == 422
+        assert c.post(f"/api/jobs/{key}/export", headers=h, json={}).status_code in (
+            404,
+            405,
+        )
 
 
 def test_diagnostics_download_requires_local_authentication(tmp_path):

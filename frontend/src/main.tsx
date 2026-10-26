@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 type Shape = { name: string; box: number[] };
@@ -8,6 +8,7 @@ type Change = {
   left: Shape | null;
   right: Shape | null;
   uncertain: boolean;
+  highlight?: "format" | "layout" | "mixed" | "other";
 };
 type Entry = {
   page: number;
@@ -22,7 +23,16 @@ type Issue = {
   page?: number;
   entries?: Entry[];
 };
+type Translation = {
+  page: number;
+  shape: string;
+  source: string;
+  target: string;
+  inconsistent: boolean;
+  notes: string[];
+};
 type Result = {
+  translations: Translation[];
   width: number;
   height: number;
   pages: { page: number; changes: Change[] }[];
@@ -77,13 +87,7 @@ function App() {
     [mode, setMode] = useState("pair"),
     [alpha, setAlpha] = useState(0.5),
     [marks, setMarks] = useState(true);
-  const [images, setImages] = useState<Record<string, string>>({}),
-    [side, setSide] = useState("left"),
-    [preset, setPreset] = useState("FHD"),
-    [width, setWidth] = useState(1920),
-    [crop, setCrop] = useState<number[] | null>(null);
-  const cropRef = useRef<HTMLDivElement>(null),
-    start = useRef<number[] | null>(null);
+  const [images, setImages] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!job) return;
     let cancelled = false;
@@ -143,17 +147,19 @@ function App() {
   }, [job, status?.status, page]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!left) return;
+    if (!left || !right) return;
+    if (left.size > 15 * 1024 ** 3 || right.size > 15 * 1024 ** 3) {
+      setError("1ファイルの上限は15GBです。");
+      return;
+    }
     setError("");
     setBusy(true);
     setStatus(null);
     setImages({});
-    setCrop(null);
     setPage(1);
-    setSide("left");
     const data = new FormData();
     data.append("left", left);
-    if (right) data.append("right", right);
+    data.append("right", right);
     data.append("threshold", String(threshold));
     try {
       const j = await (
@@ -196,7 +202,7 @@ function App() {
               return b ? (
                 <span
                   key={i}
-                  className="mark"
+                  className={"mark " + (c.highlight || "other")}
                   title={c.fields.join(" / ")}
                   style={{
                     left: (b[0] / result.width) * 100 + "%",
@@ -209,24 +215,6 @@ function App() {
             })}
       </div>
     );
-  }
-  function point(e: React.PointerEvent) {
-    const r = cropRef.current!.getBoundingClientRect();
-    return [
-      Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
-      Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
-    ];
-  }
-  function move(e: React.PointerEvent) {
-    if (!start.current) return;
-    const p = point(e),
-      a = start.current;
-    setCrop([
-      Math.min(a[0], p[0]),
-      Math.min(a[1], p[1]),
-      Math.abs(a[0] - p[0]),
-      Math.abs(a[1] - p[1]),
-    ]);
   }
   return (
     <>
@@ -248,7 +236,7 @@ function App() {
           </div>
           <form onSubmit={submit}>
             <label>
-              01 原本（画像出力のみの場合もこちら）
+              01 日本語原本
               <input
                 required
                 type="file"
@@ -257,18 +245,19 @@ function App() {
               />
             </label>
             <label>
-              02 英訳版（比較する場合）
+              02 英訳版
               <input
+                required
                 type="file"
                 accept=".pptx"
                 onChange={(e) => setRight(e.target.files?.[0] || null)}
               />
             </label>
-            <button disabled={busy || !left}>
+            <button disabled={busy || !left || !right}>
               {" "}
-              {busy ? "処理中…" : right ? "比較を開始 →" : "画像出力の準備 →"}
+              {busy ? "処理中…" : "比較を開始 →"}
             </button>
-            <small>同ページ数・同寸法の .pptx ／ 各800MBまで</small>
+            <small>同ページ数・同寸法の .pptx ／ 各15GBまで</small>
           </form>
         </section>
         {error && (
@@ -345,6 +334,14 @@ function App() {
                     </>
                   )}
                 </div>
+                {result && (
+                  <div className="legend" aria-label="ハイライトの凡例">
+                    <span className="format">書式のみ</span>
+                    <span className="layout">配置・サイズ・回転</span>
+                    <span className="mixed">書式と配置</span>
+                    <span className="other">画像・追加削除・要確認</span>
+                  </div>
+                )}
                 {result && mode === "overlay" ? (
                   <>
                     <label>
@@ -425,8 +422,23 @@ function App() {
                       ) : (
                         changes.map((c, i) => (
                           <article key={i}>
-                            <span className={"badge " + c.kind}>
-                              {c.kind === "text" ? "文字内容" : "書式・配置"}
+                            <span
+                              className={
+                                "badge " +
+                                (c.kind === "text"
+                                  ? "text"
+                                  : c.highlight || "other")
+                              }
+                            >
+                              {c.kind === "text"
+                                ? "文字内容"
+                                : c.highlight === "format"
+                                  ? "書式のみ"
+                                  : c.highlight === "layout"
+                                    ? "配置"
+                                    : c.highlight === "mixed"
+                                      ? "書式と配置"
+                                      : "その他・要確認"}
                             </span>
                             <strong>{(c.left || c.right)?.name}</strong>
                             <p>
@@ -481,121 +493,63 @@ function App() {
                   </article>
                 ))}
                 {!result.issues.length && <p>候補はありません。</p>}
+                <h3>
+                  全文章の日英比較表{" "}
+                  <small>{result.translations.length} 件</small>
+                </h3>
+                <p>
+                  全ページのテキストボックス・表セル単位で表示します。同一原文は空白・改行を正規化して集約します。
+                </p>
+                <div className="translation-table-wrap">
+                  <table className="translation-table">
+                    <thead>
+                      <tr>
+                        <th>ページ・要素</th>
+                        <th>日本語原文</th>
+                        <th>英訳</th>
+                        <th>注釈</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.translations.map((row, i) => (
+                        <tr
+                          key={i}
+                          className={row.inconsistent ? "inconsistent" : ""}
+                        >
+                          <td>
+                            <button
+                              onClick={() => {
+                                setPage(row.page);
+                                document
+                                  .querySelector(".workspace")
+                                  ?.scrollIntoView({
+                                    behavior: "smooth",
+                                    block: "start",
+                                  });
+                              }}
+                            >
+                              p.{row.page}
+                            </button>
+                            <small>{row.shape}</small>
+                          </td>
+                          <td>{row.source || "（原文なし）"}</td>
+                          <td>{row.target || "（訳文なし）"}</td>
+                          <td>
+                            {row.notes.length
+                              ? row.notes.map((note) => (
+                                  <span className="translation-note" key={note}>
+                                    {note}
+                                  </span>
+                                ))
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </section>
             )}
-            <section className="panel">
-              <h2>スライドを画像として保存</h2>
-              <div className="toolbar">
-                <label>
-                  対象{" "}
-                  <select
-                    value={side}
-                    onChange={(e) => setSide(e.target.value)}
-                  >
-                    {status.sides.map((s) => (
-                      <option key={s} value={s}>
-                        {s === "left" ? "原本" : "英訳版"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  解像度{" "}
-                  <select
-                    value={preset}
-                    onChange={(e) => setPreset(e.target.value)}
-                  >
-                    <option value="HD">HD（1280×720枠）</option>
-                    <option value="FHD">フルHD（1920×1080枠）</option>
-                    <option value="4K">4K（3840×2160枠）</option>
-                    <option value="custom">カスタム切り抜き</option>
-                  </select>
-                </label>
-                {preset === "custom" && (
-                  <label>
-                    出力幅{" "}
-                    <input
-                      type="number"
-                      min="64"
-                      max="7680"
-                      value={width}
-                      onChange={(e) => setWidth(+e.target.value)}
-                    />{" "}
-                    px
-                  </label>
-                )}
-                <button
-                  disabled={
-                    busy ||
-                    (preset === "custom" &&
-                      (!crop || crop[2] < 0.001 || crop[3] < 0.001))
-                  }
-                  onClick={() =>
-                    action(async () =>
-                      download(
-                        await api(`jobs/${job}/export`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ side, preset, width, crop }),
-                        }),
-                        "PawapoDiff-images.zip",
-                      ),
-                    )
-                  }
-                >
-                  全ページをPNGで保存
-                </button>
-              </div>
-              {preset === "custom" && (
-                <>
-                  <p>
-                    上のページ一覧で代表ページを選び、画像上をドラッグしてください。同じ範囲を全ページに適用します。
-                  </p>
-                  <button onClick={() => setCrop([0, 0, 1, 1])}>
-                    全体を選択
-                  </button>
-                  <div
-                    className="crop"
-                    ref={cropRef}
-                    onPointerDown={(e) => {
-                      start.current = point(e);
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      setCrop(null);
-                    }}
-                    onPointerMove={move}
-                    onPointerUp={(e) => {
-                      move(e);
-                      start.current = null;
-                    }}
-                    onPointerCancel={() => {
-                      start.current = null;
-                    }}
-                  >
-                    <img
-                      src={images[side]}
-                      alt="切り抜き範囲の選択"
-                      draggable={false}
-                    />
-                    {crop && (
-                      <span
-                        style={{
-                          left: crop[0] * 100 + "%",
-                          top: crop[1] * 100 + "%",
-                          width: crop[2] * 100 + "%",
-                          height: crop[3] * 100 + "%",
-                        }}
-                      />
-                    )}
-                  </div>
-                  {crop && (
-                    <p>
-                      選択範囲：
-                      {crop.map((n) => (n * 100).toFixed(1) + "%").join(" / ")}
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
           </>
         )}
         <footer>

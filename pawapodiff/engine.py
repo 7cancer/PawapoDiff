@@ -1,11 +1,13 @@
 """Read-only OOXML inspection; geometry is expressed in slide points."""
 
 from collections import defaultdict
+from io import BytesIO
 from hashlib import sha256
 import re
 from zipfile import ZipFile, BadZipFile
 from lxml import etree
 from pptx import Presentation
+from .limits import MAX_EXPANDED_BYTES, MAX_XML_PART_BYTES, MAX_XML_TOTAL_BYTES
 
 EMU = 12700
 JP = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
@@ -22,8 +24,18 @@ def normalize(text):
 def validate(path):
     try:
         with ZipFile(path) as z:
-            if sum(i.file_size for i in z.infolist()) > 4 * 1024**3:
-                raise InputError("展開後のサイズが4GBを超えています。")
+            if sum(i.file_size for i in z.infolist()) > MAX_EXPANDED_BYTES:
+                raise InputError("展開後のサイズが60GBを超えています。")
+            xml_parts = [
+                i for i in z.infolist() if i.filename.endswith((".xml", ".rels"))
+            ]
+            if (
+                any(i.file_size > MAX_XML_PART_BYTES for i in xml_parts)
+                or sum(i.file_size for i in xml_parts) > MAX_XML_TOTAL_BYTES
+            ):
+                raise InputError(
+                    "XML構造情報が上限（1パーツ64MB・合計512MB）を超えています。"
+                )
             names = z.namelist()
             if "ppt/presentation.xml" not in names:
                 raise InputError("PowerPointのpptxファイルではありません。")
@@ -140,8 +152,25 @@ def text_style(frame):
 
 def inspect(path):
     validate(path)
+    source_media = None
     try:
-        prs = Presentation(path)
+        # python-pptx eagerly loads every binary part. Give it a metadata-only
+        # package, and hash the original media in bounded chunks when needed.
+        metadata = BytesIO()
+        with ZipFile(path) as source, ZipFile(metadata, "w") as target:
+            for info in source.infolist():
+                target.writestr(
+                    info.filename,
+                    (
+                        source.read(info.filename)
+                        if info.filename.endswith((".xml", ".rels"))
+                        else b""
+                    ),
+                )
+        metadata.seek(0)
+        prs = Presentation(metadata)
+        source_media = ZipFile(path)
+        image_hashes = {}
         slides = []
         inherited = []
 
@@ -198,7 +227,15 @@ def inspect(path):
                 if sh.has_text_frame:
                     item.update(text=sh.text, style=text_style(sh.text_frame))
                 if sh.shape_type == 13:
-                    item["image"] = sha256(sh.image.blob).hexdigest()
+                    rid = sh._pic.blip_rId
+                    name = str(sh.part.related_part(rid).partname).lstrip("/")
+                    if name not in image_hashes:
+                        digest = sha256()
+                        with source_media.open(name) as stream:
+                            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                                digest.update(chunk)
+                        image_hashes[name] = digest.hexdigest()
+                    item["image"] = image_hashes[name]
                 result.append(item)
                 if sh.has_table:
                     table = sh.table
@@ -258,6 +295,9 @@ def inspect(path):
         raise InputError(
             "スライドを解析できません。PowerPointで開き直してpptxとして保存してください。"
         ) from e
+    finally:
+        if source_media is not None:
+            source_media.close()
 
 
 def pair_shapes(left, right):
@@ -290,7 +330,7 @@ def compare(left, right, threshold=1):
         )
     if (left["width"], left["height"]) != (right["width"], right["height"]):
         raise InputError("スライドの寸法が一致しません。")
-    pages, translations, issues = [], defaultdict(list), []
+    pages, groups, issues, rows = [], defaultdict(list), [], []
     for page, (aa, bb) in enumerate(zip(left["slides"], right["slides"]), 1):
         changes = []
         if (
@@ -305,6 +345,7 @@ def compare(left, right, threshold=1):
             changes.append(
                 {
                     "kind": "structure",
+                    "highlight": "other",
                     "fields": ["継承された書式・レイアウトの変更（要確認）"],
                     "left": marker,
                     "right": marker,
@@ -312,8 +353,36 @@ def compare(left, right, threshold=1):
                 }
             )
         for a, b, uncertain in pair_shapes(aa, bb):
+            source = a.get("text", "") if a else ""
+            target = b.get("text", "") if b else ""
+            source_key, target_key = normalize(source), normalize(target)
+            if source_key or target_key:
+                notes = []
+                if uncertain:
+                    notes.append("対応付け要確認")
+                if not source_key:
+                    notes.append("対応する原文なし")
+                row = {
+                    "page": page,
+                    "shape": (a or b)["name"],
+                    "source": source,
+                    "target": target,
+                    "uncertain": uncertain,
+                    "inconsistent": False,
+                    "notes": notes,
+                }
+                rows.append(row)
+                if source_key:
+                    groups[source_key].append(row)
+                    if not target_key:
+                        notes.append("訳抜け候補")
+                        issues.append(dict(row, kind="訳抜け候補"))
+                if target_key and JP.search(target_key):
+                    notes.append("日本語の残存候補")
+                    issues.append(dict(row, kind="日本語の残存候補"))
             fields = []
             delta = None
+            layout = formatting = False
             if not a or not b:
                 fields.append("要素の追加" if b else "要素の削除")
             else:
@@ -321,27 +390,16 @@ def compare(left, right, threshold=1):
                 for i, label in enumerate(["横位置", "縦位置", "幅", "高さ"]):
                     if abs(delta[i]) > 0.00001 and abs(delta[i]) >= threshold:
                         fields.append(f"{label}: {delta[i]:+.2f} pt")
+                        layout = True
                 if abs(a["rotation"] - b["rotation"]) > 0.001:
                     fields.append("回転")
+                    layout = True
                 if a["style"] != b["style"]:
                     fields.append("文字書式・配置")
+                    formatting = True
                 if a["image"] != b["image"]:
                     fields.append("画像")
-                source, target = normalize(a["text"]), normalize(b["text"])
-                if source:
-                    entry = {
-                        "page": page,
-                        "source": source,
-                        "target": target,
-                        "shape": a["name"],
-                        "uncertain": uncertain,
-                    }
-                    translations[source].append(entry)
-                    if not target:
-                        issues.append(dict(entry, kind="訳抜け候補"))
-                    elif JP.search(target):
-                        issues.append(dict(entry, kind="日本語の残存候補"))
-                if source != target:
+                if source_key != target_key:
                     changes.append(
                         {
                             "kind": "text",
@@ -352,9 +410,15 @@ def compare(left, right, threshold=1):
                         }
                     )
             if fields or uncertain:
+                highlight = (
+                    "mixed"
+                    if layout and formatting
+                    else "layout" if layout else "format" if formatting else "other"
+                )
                 changes.append(
                     {
                         "kind": "structure",
+                        "highlight": highlight,
                         "fields": fields or ["対応付け要確認"],
                         "delta": delta,
                         "left": a,
@@ -363,8 +427,15 @@ def compare(left, right, threshold=1):
                     }
                 )
         pages.append({"page": page, "changes": changes})
-    for source, entries in translations.items():
-        if len({e["target"] for e in entries if e["target"]}) > 1:
+    for source, entries in groups.items():
+        if (
+            JP.search(source)
+            and len({normalize(e["target"]) for e in entries if normalize(e["target"])})
+            > 1
+        ):
+            for entry in entries:
+                entry["inconsistent"] = True
+                entry["notes"].append("表記揺らぎの可能性あり")
             issues.append(
                 {"kind": "表記揺れ候補", "source": source, "entries": entries}
             )
@@ -373,5 +444,6 @@ def compare(left, right, threshold=1):
         "height": left["height"],
         "pages": pages,
         "issues": issues,
+        "translations": rows,
         "threshold": threshold,
     }

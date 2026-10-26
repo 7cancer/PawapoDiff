@@ -6,7 +6,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from PIL import Image
 from pawapodiff.engine import inspect, compare, InputError
-from pawapodiff.render import export_images, render, RenderError
+from pawapodiff.render import render, RenderError
 from pawapodiff.report import report
 
 
@@ -106,29 +106,9 @@ def test_reject_dimensions_pages_corruption(tmp_path):
         inspect(b)
 
 
-@pytest.mark.parametrize("ratio", [(160, 90), (120, 90)])
-def test_exports_and_report(tmp_path, ratio):
-    images = []
-    for n in range(2):
-        path = tmp_path / f"{n}.png"
-        Image.new("RGB", ratio, "white").save(path)
-        images.append(path)
-    for preset, bounds in [
-        ("HD", (1280, 720)),
-        ("FHD", (1920, 1080)),
-        ("4K", (3840, 2160)),
-    ]:
-        outputs = export_images(images, tmp_path / preset, preset)
-        assert len(outputs) == 2
-        with Image.open(outputs[0]) as im:
-            assert im.width <= bounds[0] and im.height <= bounds[1]
-            assert abs(im.width / im.height - ratio[0] / ratio[1]) < 0.002
-    cropped = export_images(images, tmp_path / "crop", "custom", [0, 0.1, 1, 0.5], 1000)
-    with Image.open(cropped[0]) as im:
-        assert im.size == (
-            1000,
-            round(1000 * (round(0.6 * ratio[1]) - round(0.1 * ratio[1])) / ratio[0]),
-        )
+def test_embedded_report_escapes_untrusted_text(tmp_path):
+    image = tmp_path / "slide.png"
+    Image.new("RGB", (160, 90), "white").save(image)
     content = report(
         {
             "width": 100,
@@ -137,18 +117,22 @@ def test_exports_and_report(tmp_path, ratio):
             "issues": [
                 {"kind": "訳抜け", "source": "<script>", "page": 1, "target": ""}
             ],
+            "translations": [
+                {
+                    "page": 1,
+                    "shape": "<img>",
+                    "source": "<script>",
+                    "target": "<b>",
+                    "inconsistent": True,
+                    "notes": ["表記揺らぎの可能性あり"],
+                }
+            ],
         },
-        {"left": images, "right": images},
+        {"left": [image], "right": [image]},
     )
     assert "data:image/png;base64," in content and "&lt;script&gt;" in content
     assert "<script>" not in content and "https://" not in content
-
-
-def test_crop_validation(tmp_path):
-    p = tmp_path / "x.png"
-    Image.new("RGB", (100, 100)).save(p)
-    with pytest.raises(InputError):
-        export_images([p], tmp_path / "out", "custom", [0.5, 0, 1, 1])
+    assert "全文章の日英比較表" in content and "表記揺らぎの可能性あり" in content
 
 
 @pytest.mark.skipif(
@@ -208,10 +192,3 @@ def test_external_relationship_is_rejected(tmp_path):
             target.writestr(item, data)
     with pytest.raises(InputError, match="外部参照"):
         inspect(b)
-
-
-def test_subpixel_crop_is_rejected(tmp_path):
-    p = tmp_path / "tiny.png"
-    Image.new("RGB", (10, 10)).save(p)
-    with pytest.raises(InputError, match="小さすぎ"):
-        export_images([p], tmp_path / "out", "custom", [0, 0, 0.0001, 0.0001])

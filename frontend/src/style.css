@@ -251,25 +251,6 @@ article strong {
   border-radius: 8px;
   margin: 16px 0;
 }
-.crop {
-  position: relative;
-  max-width: 850px;
-  touch-action: none;
-  cursor: crosshair;
-  margin-top: 18px;
-  user-select: none;
-}
-.crop img {
-  display: block;
-  width: 100%;
-  pointer-events: none;
-}
-.crop span {
-  position: absolute;
-  border: 2px solid #1b9eaa;
-  background: #159ba929;
-  pointer-events: none;
-}
 footer {
   font-size: 12px;
   line-height: 1.8;
@@ -300,4 +281,112 @@ footer {
   .toolbar {
     gap: 10px;
   }
+}
+
+.mark.format {
+  border-color: #2563eb;
+  background: #2563eb18;
+}
+.mark.layout {
+  border-color: #ea580c;
+  background: #ea580c18;
+}
+.mark.mixed {
+  border-color: #9333ea;
+  background: #9333ea18;
+}
+.mark.other {
+  border-color: #64748b;
+  background: #64748b18;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-size: 12px;
+  margin: 0 0 18px;
+  color: #526078;
+}
+.legend span::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.legend .format::before {
+  border-color: #2563eb;
+}
+.legend .layout::before {
+  border-color: #ea580c;
+}
+.legend .mixed::before {
+  border-color: #9333ea;
+}
+.legend .other::before {
+  border-color: #64748b;
+}
+.badge.format {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.badge.layout {
+  background: #ffedd5;
+  color: #9a3412;
+}
+.badge.mixed {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+.badge.other {
+  background: #e2e8f0;
+  color: #475569;
+}
+.translation-table-wrap {
+  overflow: auto;
+  max-height: 640px;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+}
+.translation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+.translation-table th,
+.translation-table td {
+  padding: 12px;
+  vertical-align: top;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.translation-table th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  z-index: 1;
+}
+.translation-table th:first-child {
+  width: 16%;
+}
+.translation-table th:last-child {
+  width: 23%;
+}
+.translation-table td small {
+  display: block;
+  margin-top: 6px;
+}
+.translation-table .inconsistent {
+  background: #fff8e8;
+}
+.translation-note {
+  display: block;
+  color: #92400e;
+  font-size: 12px;
+  margin-bottom: 6px;
 }

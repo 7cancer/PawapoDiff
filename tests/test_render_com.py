@@ -51,13 +51,20 @@ def office(tmp_path, *, fail=None, shared=False, cleanup_fails=False):
         Presentations=SimpleNamespace(Open=open_presentation),
         Quit=lambda: cleanup("quit"),
     )
+
+    def process_lookup(hwnd):
+        if type(hwnd) is not int:
+            raise TypeError("Expected an integer HWND, not a method")
+        assert hwnd == 123
+        return (1, 42)
+
     dependencies = dict(
         com=SimpleNamespace(
             CoInitialize=lambda: calls.append("init"),
             CoUninitialize=lambda: calls.append("uninit"),
         ),
         client=SimpleNamespace(DispatchEx=lambda name: app),
-        process_lookup=lambda hwnd: (1, 42),
+        process_lookup=process_lookup,
         processes=SimpleNamespace(
             process_iter=lambda attrs: (
                 [SimpleNamespace(pid=42, info={"name": "POWERPNT.EXE"})]
@@ -143,7 +150,8 @@ def test_unknown_process_is_not_quit(tmp_path):
 @pytest.mark.skipif(
     __import__("sys").platform != "win32", reason="Requires native Windows HWND APIs"
 )
-def test_office_integer_hwnd_resolves_with_real_windows_api():
+@pytest.mark.parametrize("hwnd_as_method", [False, True])
+def test_office_hwnd_resolves_with_real_windows_api(tmp_path, hwnd_as_method):
     """Runs in Windows CI without Office, using a real window owned by this test."""
     import ctypes
     from ctypes import wintypes
@@ -174,11 +182,76 @@ def test_office_integer_hwnd_resolves_with_real_windows_api():
     if not hwnd:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
-        # PowerPoint returns this as a plain number. Do not supply a PyHANDLE.
-        thread_id, pid = _window_process_id(int(hwnd))
-        assert thread_id > 0
-        assert pid == os.getpid()
+        # Exercise the entire ownership path against a real Windows handle,
+        # including the late-bound method that triggered the reported failure.
+        calls, dependencies = office(tmp_path)
+        app = dependencies["client"].DispatchEx("PowerPoint.Application")
+        getter_calls = []
+
+        class LateBoundApplication:
+            def HWND(self):
+                getter_calls.append("HWND")
+                return int(hwnd)
+
+        app.HWND = LateBoundApplication().HWND if hwnd_as_method else int(hwnd)
+
+        def real_process_lookup(value):
+            thread_id, pid = _window_process_id(value)
+            assert thread_id > 0
+            assert pid == os.getpid()
+            return thread_id, pid
+
+        dependencies["process_lookup"] = real_process_lookup
+        paths = _render_powerpoint(
+            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+        )
+        assert len(paths) == 3
+        assert getter_calls == (["HWND"] if hwnd_as_method else [])
+        assert "quit" in calls
         with pytest.raises(OSError):
             _window_process_id(0)
     finally:
         assert user32.DestroyWindow(hwnd)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_bound_hwnd_getter_is_called_once_before_ownership_lookup(tmp_path, shared):
+    calls, dependencies = office(tmp_path, shared=shared)
+    app = dependencies["client"].DispatchEx("PowerPoint.Application")
+    getter_calls = []
+
+    class LateBoundApplication:
+        def HWND(self):
+            getter_calls.append("HWND")
+            return 123
+
+    app.HWND = LateBoundApplication().HWND
+    if shared:
+        with pytest.raises(RenderError, match="既存プロセス"):
+            _render_powerpoint(
+                tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+            )
+        assert calls == ["init", "uninit"]
+    else:
+        paths = _render_powerpoint(
+            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+        )
+        assert len(paths) == 3
+        assert "open" in calls and "close" in calls and "quit" in calls
+    assert getter_calls == ["HWND"]
+
+
+def test_failed_hwnd_getter_does_not_open_or_quit_unidentified_app(tmp_path):
+    calls, dependencies = office(tmp_path)
+    app = dependencies["client"].DispatchEx("PowerPoint.Application")
+
+    class LateBoundApplication:
+        def HWND(self):
+            raise OfficeFailure()
+
+    app.HWND = LateBoundApplication().HWND
+    with pytest.raises(RenderError, match="所有権確認"):
+        _render_powerpoint(
+            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+        )
+    assert calls == ["init", "uninit"]

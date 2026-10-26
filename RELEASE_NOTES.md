@@ -10,6 +10,11 @@ Windows 10/11（x64）、デスクトップ版Microsoft PowerPoint、Chrome/Edge
 
 `PawapoDiff-Setup.exe.sha256` も添付しています。EXEは未署名です。
 
+## v0.1.3の修正
+
+- `HWND`が数値ではなくメソッドとして返されるPowerPoint環境で、所有権確認が失敗する問題を修正しました。呼び出し可能な場合は一度呼び出してハンドル値を取得してから、Windows APIに渡します。
+- 数値形式・メソッド形式の両方、既存プロセス共有時、ハンドル取得失敗時の保護を回帰テストで確認します。
+
 ## v0.1.2の修正
 
 - 所有権確認で発生する `TypeError: The object is not a PyHANDLE object` を修正しました。PowerPointから返される整数のウィンドウハンドルを、型を指定したWindows APIに渡してプロセスIDを取得します。

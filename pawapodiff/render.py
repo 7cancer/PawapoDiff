@@ -94,7 +94,12 @@ def _render_powerpoint(
         stage = "PowerPointの起動"
         app = client.DispatchEx("PowerPoint.Application")
         stage = "PowerPointプロセスの所有権確認"
-        _, pid = process_lookup(app.HWND)
+        # Late-bound PowerPoint exposes HWND as a zero-argument method on some
+        # installations; generated wrappers may expose the same member as a value.
+        hwnd = app.HWND
+        if callable(hwnd):
+            hwnd = hwnd()
+        _, pid = process_lookup(hwnd)
         if not pid:
             raise RenderError(
                 "PowerPointのプロセスを特定できないため、安全のため中断しました。"

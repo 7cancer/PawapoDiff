@@ -11,8 +11,13 @@ try {
     npm run build
     if ($LASTEXITCODE) { throw 'frontend build failed' }
 } finally { Pop-Location }
-& .\.venv\Scripts\python.exe -m pytest -q
-if ($LASTEXITCODE) { throw 'tests failed' }
+New-Item -ItemType Directory -Force -Path build | Out-Null
+& .\.venv\Scripts\python.exe -m pytest -q --junitxml=build/test-results.xml
+$testExitCode = $LASTEXITCODE
+if ($testExitCode) {
+    & .\.venv\Scripts\python.exe scripts/report-test-failures.py build/test-results.xml
+    throw 'tests failed'
+}
 & .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoDiff --onedir --paths . --collect-submodules win32com --collect-submodules uvicorn --hidden-import pythoncom --hidden-import pywintypes --add-data 'frontend/dist;frontend/dist' scripts/launcher.py
 if ($LASTEXITCODE) { throw 'packaging failed' }
 Write-Host 'dist\PawapoDiff\PawapoDiff.exe を起動してください。配布時はPawapoDiffフォルダー全体をコピーします。'

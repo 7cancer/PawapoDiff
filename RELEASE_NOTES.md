@@ -10,6 +10,11 @@ Windows 10/11（x64）、デスクトップ版Microsoft PowerPoint、Chrome/Edge
 
 `PawapoDiff-Setup.exe.sha256` も添付しています。EXEは未署名です。
 
+## v0.1.2の修正
+
+- 所有権確認で発生する `TypeError: The object is not a PyHANDLE object` を修正しました。PowerPointから返される整数のウィンドウハンドルを、型を指定したWindows APIに渡してプロセスIDを取得します。
+- Windows CIでテスト用の実ウィンドウを作り、整数ハンドルから正しいプロセスIDを取得できることを検証します。既存のPowerPointプロセスを終了しない保護は維持しています。
+
 ## v0.1.1の修正
 
 - PowerPointの資料を開く際に、OfficeのMsoTriState値（-1／0）と位置引数を明示し、COM呼び出しの互換性を改善しました。

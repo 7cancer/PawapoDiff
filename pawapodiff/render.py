@@ -18,7 +18,6 @@ def render(path, destination, width=3840):
         )
     import pythoncom
     import win32com.client
-    import win32process
     import psutil
 
     return _render_powerpoint(
@@ -27,7 +26,6 @@ def render(path, destination, width=3840):
         width,
         com=pythoncom,
         client=win32com.client,
-        process_api=win32process,
         processes=psutil,
     )
 
@@ -49,8 +47,35 @@ def _error_detail(error):
     return " / ".join(details)[:700]
 
 
+def _window_process_id(hwnd):
+    """Use a typed HWND boundary; Office returns an integer, not a PyHANDLE.
+
+    A window handle must never be wrapped as an owning kernel HANDLE: closing
+    that wrapper would call CloseHandle on a window we do not own.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    lookup = user32.GetWindowThreadProcessId
+    lookup.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    lookup.restype = wintypes.DWORD
+    pid = wintypes.DWORD()
+    thread_id = lookup(wintypes.HWND(int(hwnd)), ctypes.byref(pid))
+    if not thread_id:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return thread_id, pid.value
+
+
 def _render_powerpoint(
-    path, destination, width, *, com, client, process_api, processes
+    path,
+    destination,
+    width,
+    *,
+    com,
+    client,
+    processes,
+    process_lookup=_window_process_id,
 ):
     # Office MsoTriState is an enum, not VARIANT_BOOL: True may marshal as the
     # unsupported value msoCTrue (1). Pass msoTrue (-1) and msoFalse (0) explicitly.
@@ -69,7 +94,7 @@ def _render_powerpoint(
         stage = "PowerPointの起動"
         app = client.DispatchEx("PowerPoint.Application")
         stage = "PowerPointプロセスの所有権確認"
-        _, pid = process_api.GetWindowThreadProcessId(app.HWND)
+        _, pid = process_lookup(app.HWND)
         if not pid:
             raise RenderError(
                 "PowerPointのプロセスを特定できないため、安全のため中断しました。"

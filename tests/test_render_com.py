@@ -57,7 +57,7 @@ def office(tmp_path, *, fail=None, shared=False, cleanup_fails=False):
             CoUninitialize=lambda: calls.append("uninit"),
         ),
         client=SimpleNamespace(DispatchEx=lambda name: app),
-        process_api=SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)),
+        process_lookup=lambda hwnd: (1, 42),
         processes=SimpleNamespace(
             process_iter=lambda attrs: (
                 [SimpleNamespace(pid=42, info={"name": "POWERPNT.EXE"})]
@@ -132,9 +132,53 @@ def test_activation_failure_is_diagnosed_and_com_is_released(tmp_path):
 
 def test_unknown_process_is_not_quit(tmp_path):
     calls, dependencies = office(tmp_path)
-    dependencies["process_api"].GetWindowThreadProcessId = lambda hwnd: (0, 0)
+    dependencies["process_lookup"] = lambda hwnd: (0, 0)
     with pytest.raises(RenderError, match="特定できない"):
         _render_powerpoint(
             tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
         )
     assert calls == ["init", "uninit"]
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="Requires native Windows HWND APIs"
+)
+def test_office_integer_hwnd_resolves_with_real_windows_api():
+    """Runs in Windows CI without Office, using a real window owned by this test."""
+    import ctypes
+    from ctypes import wintypes
+    import os
+    from pawapodiff.render import _window_process_id
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        wintypes.HMENU,
+        wintypes.HINSTANCE,
+        ctypes.c_void_p,
+    ]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.DestroyWindow.argtypes = [wintypes.HWND]
+    user32.DestroyWindow.restype = wintypes.BOOL
+    hwnd = user32.CreateWindowExW(
+        0, "STATIC", "PawapoDiff HWND test", 0, 0, 0, 1, 1, None, None, None, None
+    )
+    if not hwnd:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        # PowerPoint returns this as a plain number. Do not supply a PyHANDLE.
+        thread_id, pid = _window_process_id(int(hwnd))
+        assert thread_id > 0
+        assert pid == os.getpid()
+        with pytest.raises(OSError):
+            _window_process_id(0)
+    finally:
+        assert user32.DestroyWindow(hwnd)

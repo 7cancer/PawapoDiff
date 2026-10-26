@@ -24,7 +24,6 @@ def main():
             parser.error("Runtime verification requires Windows.")
         import pythoncom
         import win32com.client
-        import win32process
         import psutil
 
         bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))

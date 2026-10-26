@@ -68,3 +68,57 @@ def test_progress_resets_inactivity_timeout(tmp_path):
     body = "for i in range(10):\n write_state(state,{'status':'running','stage':str(i)});time.sleep(.3)\nwrite_state(state,{'status':'done'})"
     args, state, stderr = command(tmp_path, body)
     assert _run_worker(args, state, stderr, timeout=2)["status"] == "done"
+
+
+def test_render_passes_only_unique_private_copies_to_office(tmp_path, monkeypatch):
+    import pawapodiff.render as module
+    from pptx import Presentation
+
+    source = tmp_path / "original.pptx"
+    presentation = Presentation()
+    presentation.slides.add_slide(presentation.slide_layouts[6])
+    presentation.save(source)
+    original = source.read_bytes()
+    copies = []
+
+    def worker(args, state_path, stderr_path, **kwargs):
+        request = json.loads(Path(args[-1]).read_text())
+        private = Path(request["source"])
+        assert private != source and private.read_bytes() == original
+        assert private.parent != source.parent
+        copies.append(private)
+        out = Path(request["destination"]) / "0001.png"
+        from PIL import Image
+
+        Image.new("RGB", (160, 90)).save(out)
+        return {"status": "done", "images": ["0001.png"]}
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setattr(module, "_run_worker", worker)
+    for index in range(2):
+        assert len(module.render(source, tmp_path / f"out-{index}", 160)) == 1
+    assert copies[0] != copies[1]
+    assert all(not path.parent.exists() for path in copies)
+    assert source.read_bytes() == original
+
+
+def test_render_failure_preserves_original_and_cleans_staging(tmp_path, monkeypatch):
+    import pawapodiff.render as module
+    from pptx import Presentation
+
+    source = tmp_path / "original.pptx"
+    presentation = Presentation()
+    presentation.save(source)
+    original = source.read_bytes()
+    copies = []
+
+    def worker(args, *a, **kw):
+        copies.append(Path(json.loads(Path(args[-1]).read_text())["source"]))
+        raise RenderError("読み込み失敗 HRESULT 0x80020003")
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setattr(module, "_run_worker", worker)
+    with pytest.raises(RenderError, match="診断ログ"):
+        module.render(source, tmp_path / "out")
+    assert source.read_bytes() == original
+    assert all(not path.parent.exists() for path in copies)

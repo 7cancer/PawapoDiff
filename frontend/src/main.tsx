@@ -273,7 +273,27 @@ function App() {
         </section>
         {error && (
           <div role="alert" className="error">
-            {error}
+            <p style={{ whiteSpace: "pre-wrap" }}>{error}</p>
+            <button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await download(
+                    await api("diagnostics"),
+                    "PawapoDiff-diagnostics.zip",
+                  );
+                } catch (e) {
+                  setError(
+                    error + "\n診断ログの保存に失敗しました: " + String(e),
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              診断ログを保存
+            </button>
           </div>
         )}
         {status && <p aria-live="polite">{status.message}</p>}

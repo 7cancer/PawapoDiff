@@ -90,3 +90,23 @@ def test_job_export_report_and_security(tmp_path):
             time.sleep(0.02)
         assert status["status"] == "done" and status["result"] is None
         assert c.get(f"/api/jobs/{key}/report", headers=h).status_code == 422
+
+
+def test_diagnostics_download_requires_local_authentication(tmp_path):
+    app = create_app("diagnostic-token", tmp_path / "work")
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        assert client.get("/api/diagnostics").status_code == 403
+        response = client.get(
+            "/api/diagnostics", headers={"X-Pawapo-Token": "diagnostic-token"}
+        )
+        assert response.status_code == 200
+        assert "PawapoDiff-diagnostics.zip" in response.headers["content-disposition"]
+        from zipfile import ZipFile
+        import io
+
+        with ZipFile(io.BytesIO(response.content)) as archive:
+            assert archive.namelist()
+            assert all(
+                b"diagnostic-token" not in archive.read(name)
+                for name in archive.namelist()
+            )

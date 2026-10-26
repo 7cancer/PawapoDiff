@@ -1,257 +1,288 @@
-"""Contract tests for COM calls. These do not claim actual PowerPoint execution."""
+"""Document ownership, documented COM contract, bounded retries and cleanup failures."""
 
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PIL import Image
-from pawapodiff.render import _render_powerpoint, RenderError
+from pawapodiff.render import _render_powerpoint, _retry_com, RenderError
 
 
 class OfficeFailure(Exception):
-    hresult = -2147352567
-    excepinfo = (0, "PowerPoint", "Office operation failed", None, 0, -2147024809)
+    def __init__(self, code=0x80020003, description="Member not found"):
+        self.hresult = code - 2**32
+        self.strerror = description
+        self.excepinfo = None
+        super().__init__(description)
 
 
-def office(tmp_path, *, fail=None, shared=False, cleanup_fails=False):
+def office(*, failures=()):
+    failures = set(failures)
     calls = []
+    state = {"security": 2, "alerts": 2, "source": None, "user_closed": False}
 
-    def cleanup(label):
+    def check(label):
         calls.append(label)
-        if cleanup_fails:
-            raise RuntimeError("cleanup error")
+        if label in failures:
+            raise OfficeFailure(description=label + " failed")
 
-    def export(path, kind, width, height):
-        calls.append("export")
-        if fail == "export":
-            raise OfficeFailure()
-        assert kind == "PNG"
-        Image.new("RGB", (width, height)).save(path)
+    class App:
+        def __getattribute__(self, name):
+            if name in ("HWND", "Visible", "Quit"):
+                calls.append("FORBIDDEN:" + name)
+                raise OfficeFailure()
+            return object.__getattribute__(self, name)
 
-    presentation = SimpleNamespace(
-        PageSetup=SimpleNamespace(SlideHeight=540, SlideWidth=960),
-        Slides=SimpleNamespace(Count=3, Item=lambda n: SimpleNamespace(Export=export)),
-        Close=lambda: cleanup("close"),
-    )
+        @property
+        def AutomationSecurity(self):
+            check("security_read")
+            return state["security"]
 
-    def open_presentation(path, readonly, untitled, with_window, /):
-        calls.append("open")
-        # Reject bools even though Python considers True == 1 and False == 0.
-        assert all(type(value) is int for value in (readonly, untitled, with_window))
-        assert (readonly, untitled, with_window) == (-1, 0, 0)
-        assert Path(path).is_absolute()
-        assert app.AutomationSecurity == 3 and app.DisplayAlerts == 1
-        assert type(app.Visible) is int and app.Visible == -1
-        if fail == "open":
-            raise OfficeFailure()
-        return presentation
+        @AutomationSecurity.setter
+        def AutomationSecurity(self, value):
+            check("security_set" if value == 3 else "security_restore")
+            state["security"] = value
 
-    app = SimpleNamespace(
-        HWND=123,
-        Presentations=SimpleNamespace(Open=open_presentation),
-        Quit=lambda: cleanup("quit"),
-    )
+        @property
+        def DisplayAlerts(self):
+            check("alerts_read")
+            return state["alerts"]
 
-    def process_lookup(hwnd):
-        if type(hwnd) is not int:
-            raise TypeError("Expected an integer HWND, not a method")
-        assert hwnd == 123
-        return (1, 42)
+        @DisplayAlerts.setter
+        def DisplayAlerts(self, value):
+            check("alerts_set" if value == 1 else "alerts_restore")
+            state["alerts"] = value
 
-    dependencies = dict(
-        com=SimpleNamespace(
-            CoInitialize=lambda: calls.append("init"),
-            CoUninitialize=lambda: calls.append("uninit"),
-        ),
-        client=SimpleNamespace(DispatchEx=lambda name: app),
-        process_lookup=process_lookup,
-        processes=SimpleNamespace(
-            process_iter=lambda attrs: (
-                [SimpleNamespace(pid=42, info={"name": "POWERPNT.EXE"})]
-                if shared
-                else []
+        @property
+        def Presentations(self):
+            check("presentations")
+            return presentations
+
+    class Presentations:
+        def Open(self, path, readonly, untitled, with_window, /):
+            check("open")
+            assert all(type(v) is int for v in (readonly, untitled, with_window))
+            assert (readonly, untitled, with_window) == (-1, 0, 0)
+            assert state["security"] == 3 and state["alerts"] == 1
+            state["source"] = path
+            return presentation
+
+    class Presentation:
+        @property
+        def FullName(self):
+            check("fullname")
+            return (
+                str(Path(state["source"]).with_name("user-document.pptx"))
+                if "wrong_document" in failures
+                else state["source"]
             )
+
+        @property
+        def PageSetup(self):
+            check("size")
+            return SimpleNamespace(SlideWidth=960, SlideHeight=540)
+
+        @property
+        def Slides(self):
+            return slides
+
+        def Close(self):
+            check("close")
+
+    class Slides:
+        @property
+        def Count(self):
+            check("count")
+            return 0 if "empty" in failures else 3
+
+        def Item(self, index):
+            check("item")
+            return slide
+
+    class Slide:
+        def Export(self, path, kind, width, height):
+            check("export")
+            # Restore shared app settings immediately after Open, before rendering.
+            assert state["security"] == 2 and state["alerts"] == 2
+            if "missing_image" not in failures:
+                Image.new(
+                    "RGB", (width + 1 if "wrong_size" in failures else width, height)
+                ).save(path)
+
+    app = App()
+    presentations = Presentations()
+    presentation = Presentation()
+    slides = Slides()
+    slide = Slide()
+
+    def dispatch(name):
+        check("activate")
+        assert name == "PowerPoint.Application"
+        return app
+
+    dependencies = {
+        "com": SimpleNamespace(
+            CoInitialize=lambda: check("init"),
+            CoUninitialize=lambda: check("uninit"),
+            PumpWaitingMessages=lambda: check("pump"),
         ),
-    )
-    return calls, dependencies
+        "client": SimpleNamespace(DispatchEx=dispatch),
+        "sleep": lambda _: None,
+    }
+    return calls, state, dependencies
 
 
-def test_positional_office_enum_arguments_and_all_pages(tmp_path):
-    calls, dependencies = office(tmp_path)
-    paths = _render_powerpoint(
-        tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+def test_success_without_hwnd_or_application_quit_preserves_user_settings(tmp_path):
+    calls, state, dependencies = office()
+    result = _render_powerpoint(
+        tmp_path / "private.pptx", tmp_path / "out", 160, **dependencies
     )
-    assert len(paths) == 3
-    assert calls == [
-        "init",
-        "open",
-        "export",
-        "export",
-        "export",
-        "close",
-        "quit",
-        "uninit",
-    ]
-    for path in paths:
+    assert len(result) == 3
+    assert state["security"] == 2 and state["alerts"] == 2
+    assert not any(c.startswith("FORBIDDEN") for c in calls)
+    assert calls.count("open") == calls.count("close") == calls.count("uninit") == 1
+    assert not state["user_closed"]
+    for path in result:
         with Image.open(path) as image:
             assert image.size == (160, 90)
 
 
 @pytest.mark.parametrize(
-    "fail,stage", [("open", "読み取り専用"), ("export", "スライド1のPNG出力")]
+    "failed,stage",
+    [
+        ("init", "COMの初期化"),
+        ("activate", "PowerPointの起動"),
+        ("security_read", "設定取得"),
+        ("security_set", "安全設定"),
+        ("alerts_read", "設定取得"),
+        ("alerts_set", "安全設定"),
+        ("presentations", "資料一覧"),
+        ("open", "読み取り専用"),
+        ("fullname", "一時資料の確認"),
+        ("size", "スライド寸法"),
+        ("count", "スライド数"),
+        ("item", "スライド1の取得"),
+        ("export", "PNG出力"),
+        ("empty", "スライド数"),
+        ("missing_image", "出力画像"),
+        ("wrong_size", "出力画像"),
+    ],
 )
-def test_failure_has_stage_hresult_and_office_detail(tmp_path, fail, stage):
-    calls, dependencies = office(tmp_path, fail=fail, cleanup_fails=True)
+def test_operation_errors_restore_settings_and_release_com(tmp_path, failed, stage):
+    calls, state, dependencies = office(failures=[failed])
+    with pytest.raises(RenderError, match=stage):
+        _render_powerpoint(
+            tmp_path / "private.pptx", tmp_path / "out", 160, **dependencies
+        )
+    assert state["security"] == 2 and state["alerts"] == 2
+    assert not any(c.startswith("FORBIDDEN") for c in calls)
+    assert calls.count("uninit") == (0 if failed == "init" else 1)
+    if "close" in calls:
+        assert state["source"] is not None
+
+
+def test_unknown_document_is_not_closed(tmp_path):
+    calls, state, dependencies = office(failures=["wrong_document"])
+    with pytest.raises(RenderError, match="別の資料"):
+        _render_powerpoint(
+            tmp_path / "private.pptx", tmp_path / "out", 160, **dependencies
+        )
+    assert "close" not in calls and not state["user_closed"]
+    assert state["security"] == 2 and state["alerts"] == 2
+
+
+@pytest.mark.parametrize(
+    "failed", ["close", "security_restore", "alerts_restore", "uninit"]
+)
+def test_cleanup_errors_are_reported_not_silently_ignored(tmp_path, failed):
+    calls, state, dependencies = office(failures=[failed])
+    with pytest.raises(RenderError, match="後処理|設定復元"):
+        _render_powerpoint(
+            tmp_path / "private.pptx", tmp_path / "out", 160, **dependencies
+        )
+    assert "uninit" in calls
+    assert not any(c.startswith("FORBIDDEN") for c in calls)
+
+
+def test_original_failure_is_preserved_when_cleanup_also_fails(tmp_path):
+    calls, state, dependencies = office(failures=["export", "close"])
     with pytest.raises(RenderError) as caught:
         _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+            tmp_path / "private.pptx", tmp_path / "out", 160, **dependencies
         )
-    message = str(caught.value)
-    assert stage in message
-    assert "0x80020009" in message and "0x80070057" in message
-    assert "Office operation failed" in message
-    assert "cleanup error" not in message
-    assert calls[-1] == "uninit" and "quit" in calls
+    text = str(caught.value)
+    assert "PNG出力" in text and "export failed" in text
+    assert "後処理" in text and "close failed" in text
+    assert "HRESULT 0x80020003" in text
+    assert state["security"] == 2 and state["alerts"] == 2
+    assert calls[-1] == "uninit"
 
 
-def test_existing_powerpoint_is_not_opened_or_closed(tmp_path):
-    calls, dependencies = office(tmp_path, shared=True)
-    with pytest.raises(RenderError, match="既存プロセス"):
-        _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+@pytest.mark.parametrize("code", [0x80010001, 0x8001010A])
+def test_only_transient_rpc_rejections_are_retried(code):
+    attempts = []
+    sleeps = []
+    pumps = []
+
+    def action():
+        attempts.append(1)
+        if len(attempts) < 4:
+            raise OfficeFailure(code, "busy")
+        return "ready"
+
+    assert (
+        _retry_com(
+            action,
+            SimpleNamespace(PumpWaitingMessages=lambda: pumps.append(1)),
+            sleep=sleeps.append,
         )
-    assert calls == ["init", "uninit"]
+        == "ready"
+    )
+    assert len(attempts) == 4 and len(pumps) == 3
+    assert sleeps == [0.2, 0.4, 0.8]
 
 
-def test_activation_failure_is_diagnosed_and_com_is_released(tmp_path):
-    calls, dependencies = office(tmp_path)
+def test_permanent_member_errors_are_not_retried():
+    attempts = []
 
-    def fail_activation(name):
+    def action():
+        attempts.append(1)
         raise OfficeFailure()
 
-    dependencies["client"].DispatchEx = fail_activation
-    with pytest.raises(RenderError, match="PowerPointの起動"):
+    with pytest.raises(OfficeFailure):
+        _retry_com(action, None, sleep=lambda _: None)
+    assert len(attempts) == 1
+
+
+def test_busy_retry_budget_is_bounded():
+    attempts = []
+
+    def action():
+        attempts.append(1)
+        raise OfficeFailure(0x80010001, "busy")
+
+    with pytest.raises(OfficeFailure):
+        _retry_com(
+            action,
+            SimpleNamespace(PumpWaitingMessages=lambda: None),
+            sleep=lambda _: None,
+        )
+    assert len(attempts) == 4
+
+
+def test_diagnostic_write_failure_cannot_prevent_security_restoration(tmp_path):
+    calls, state, dependencies = office(failures=["open"])
+
+    def broken_progress(label):
+        raise OSError("disk full")
+
+    with pytest.raises(RenderError, match="読み取り専用"):
         _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
+            tmp_path / "private.pptx",
+            tmp_path / "out",
+            160,
+            stage_callback=broken_progress,
+            **dependencies,
         )
-    assert calls == ["init", "uninit"]
-
-
-def test_unknown_process_is_not_quit(tmp_path):
-    calls, dependencies = office(tmp_path)
-    dependencies["process_lookup"] = lambda hwnd: (0, 0)
-    with pytest.raises(RenderError, match="特定できない"):
-        _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
-        )
-    assert calls == ["init", "uninit"]
-
-
-@pytest.mark.skipif(
-    __import__("sys").platform != "win32", reason="Requires native Windows HWND APIs"
-)
-@pytest.mark.parametrize("hwnd_as_method", [False, True])
-def test_office_hwnd_resolves_with_real_windows_api(tmp_path, hwnd_as_method):
-    """Runs in Windows CI without Office, using a real window owned by this test."""
-    import ctypes
-    from ctypes import wintypes
-    import os
-    from pawapodiff.render import _window_process_id
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.CreateWindowExW.argtypes = [
-        wintypes.DWORD,
-        wintypes.LPCWSTR,
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        wintypes.HWND,
-        wintypes.HMENU,
-        wintypes.HINSTANCE,
-        ctypes.c_void_p,
-    ]
-    user32.CreateWindowExW.restype = wintypes.HWND
-    user32.DestroyWindow.argtypes = [wintypes.HWND]
-    user32.DestroyWindow.restype = wintypes.BOOL
-    hwnd = user32.CreateWindowExW(
-        0, "STATIC", "PawapoDiff HWND test", 0, 0, 0, 1, 1, None, None, None, None
-    )
-    if not hwnd:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        # Exercise the entire ownership path against a real Windows handle,
-        # including the late-bound method that triggered the reported failure.
-        calls, dependencies = office(tmp_path)
-        app = dependencies["client"].DispatchEx("PowerPoint.Application")
-        getter_calls = []
-
-        class LateBoundApplication:
-            def HWND(self):
-                getter_calls.append("HWND")
-                return int(hwnd)
-
-        app.HWND = LateBoundApplication().HWND if hwnd_as_method else int(hwnd)
-
-        def real_process_lookup(value):
-            thread_id, pid = _window_process_id(value)
-            assert thread_id > 0
-            assert pid == os.getpid()
-            return thread_id, pid
-
-        dependencies["process_lookup"] = real_process_lookup
-        paths = _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
-        )
-        assert len(paths) == 3
-        assert getter_calls == (["HWND"] if hwnd_as_method else [])
-        assert "quit" in calls
-        with pytest.raises(OSError):
-            _window_process_id(0)
-    finally:
-        assert user32.DestroyWindow(hwnd)
-
-
-@pytest.mark.parametrize("shared", [False, True])
-def test_bound_hwnd_getter_is_called_once_before_ownership_lookup(tmp_path, shared):
-    calls, dependencies = office(tmp_path, shared=shared)
-    app = dependencies["client"].DispatchEx("PowerPoint.Application")
-    getter_calls = []
-
-    class LateBoundApplication:
-        def HWND(self):
-            getter_calls.append("HWND")
-            return 123
-
-    app.HWND = LateBoundApplication().HWND
-    if shared:
-        with pytest.raises(RenderError, match="既存プロセス"):
-            _render_powerpoint(
-                tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
-            )
-        assert calls == ["init", "uninit"]
-    else:
-        paths = _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
-        )
-        assert len(paths) == 3
-        assert "open" in calls and "close" in calls and "quit" in calls
-    assert getter_calls == ["HWND"]
-
-
-def test_failed_hwnd_getter_does_not_open_or_quit_unidentified_app(tmp_path):
-    calls, dependencies = office(tmp_path)
-    app = dependencies["client"].DispatchEx("PowerPoint.Application")
-
-    class LateBoundApplication:
-        def HWND(self):
-            raise OfficeFailure()
-
-    app.HWND = LateBoundApplication().HWND
-    with pytest.raises(RenderError, match="所有権確認"):
-        _render_powerpoint(
-            tmp_path / "input.pptx", tmp_path / "out", 160, **dependencies
-        )
-    assert calls == ["init", "uninit"]
+    assert state["security"] == 2 and state["alerts"] == 2
+    assert calls[-1] == "uninit"

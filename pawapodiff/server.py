@@ -2,13 +2,13 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-import json
+import logging
 from pathlib import Path
 import secrets
 import shutil
 import tempfile
 import threading
-from zipfile import ZipFile
+from zipfile import ZipFile, ZIP_DEFLATED
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -120,6 +120,7 @@ def create_app(token=None, root=None, renderer=render):
         except (InputError, RenderError) as e:
             job.status, job.message = "error", str(e)
         except Exception:
+            logging.getLogger(__name__).exception("Unexpected job processing failure")
             job.status, job.message = (
                 "error",
                 "処理に失敗しました。ファイル形式と空き容量を確認してください。",
@@ -136,6 +137,24 @@ def create_app(token=None, root=None, renderer=render):
                     raise HTTPException(413, "1ファイルの上限は800MBです。")
                 f.write(chunk)
         await upload.close()
+
+    @app.get("/api/diagnostics")
+    def diagnostics():
+        from .diagnostics import diagnostic_files
+
+        files = diagnostic_files()
+        if not files:
+            raise HTTPException(503, "診断ログの保存先を作成できません。")
+        archive = work / f"diagnostics-{secrets.token_hex(8)}.zip"
+        with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:
+            for path in files:
+                try:
+                    bundle.write(path, path.name)
+                except OSError:
+                    continue
+        return FileResponse(
+            archive, filename="PawapoDiff-diagnostics.zip", media_type="application/zip"
+        )
 
     @app.post("/api/jobs")
     async def new_job(

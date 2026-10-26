@@ -15,7 +15,15 @@ def main():
         action="store_true",
         help="Verify packaged resources and Windows runtime without opening PowerPoint.",
     )
+    parser.add_argument("--render-worker", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    from .diagnostics import configure_diagnostics
+
+    configure_diagnostics()
+    if args.render_worker:
+        from .office_worker import run_worker
+
+        return run_worker(args.render_worker)
     if args.check_runtime:
         import sys
         from pathlib import Path
@@ -24,12 +32,32 @@ def main():
             parser.error("Runtime verification requires Windows.")
         import pythoncom
         import win32com.client
-        import psutil
 
         bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
         if not (bundle / "frontend/dist/index.html").is_file():
             parser.error("Packaged frontend assets are missing.")
-        print("PASS: Windows runtime modules and frontend assets are available.")
+        import json
+        import tempfile
+        from .render import _run_worker, _worker_command
+
+        with tempfile.TemporaryDirectory(prefix="PawapoDiff-probe-") as directory:
+            root = Path(directory)
+            request = root / "request.json"
+            request.write_text(
+                json.dumps({"mode": "probe", "state": str(root / "state.json")}),
+                encoding="utf-8",
+            )
+            state = _run_worker(
+                _worker_command(request),
+                root / "state.json",
+                root / "stderr.log",
+                timeout=30,
+            )
+            if not state.get("probe"):
+                parser.error("Office worker startup verification failed.")
+        print(
+            "PASS: Windows runtime, assets and isolated worker startup are available."
+        )
         return
     token = secrets.token_urlsafe(32)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -55,4 +83,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

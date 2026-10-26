@@ -37,6 +37,7 @@ def test_real_idispatch_document_contract(tmp_path, failure):
             raise COMException(desc=label + " failed", scode=-2147024809)
 
     class Setup:
+        _public_methods_ = []  # Required even for property-only pywin32 COM servers.
         _public_attrs_ = ["SlideWidth", "SlideHeight"]
         SlideWidth = 960
         SlideHeight = 540

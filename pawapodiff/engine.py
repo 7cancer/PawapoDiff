@@ -425,13 +425,11 @@ def inspect(path, *, progress=None):
                             "image": None,
                         }
                     )
-                    result.extend(
-                        walk(
-                            sh.shapes,
-                            key + "/",
-                            child_transform,
-                        )
-                    )
+                    children = walk(sh.shapes, key + "/", child_transform)
+                    if geometry_unknown:
+                        for child in children:
+                            child["geometry_unknown"] = True
+                    result.extend(children)
                     continue
                 item = {
                     "id": key,
@@ -591,7 +589,8 @@ def pair_shapes(left, right):
 def compare(left, right, threshold=1):
     if len(left["slides"]) != len(right["slides"]):
         raise InputError(
-            "ページ数が一致しません。ページ数が同じ資料を指定してください。"
+            f"ページ数が一致しません（原本{len(left['slides'])}ページ、英訳版{len(right['slides'])}ページ）。ページ数が同じ資料を指定してください。",
+            code="PAGE_COUNT_MISMATCH",
         )
     if (left["width"], left["height"]) != (right["width"], right["height"]):
         raise InputError(
@@ -601,10 +600,16 @@ def compare(left, right, threshold=1):
     pages, groups, issues, rows = [], defaultdict(list), [], []
     for page, (aa, bb) in enumerate(zip(left["slides"], right["slides"]), 1):
         changes = []
-        if (
-            left.get("inherited", [None] * len(left["slides"]))[page - 1]
-            != right.get("inherited", [None] * len(right["slides"]))[page - 1]
-        ):
+        inherited_left = left.get("inherited", [None] * len(left["slides"]))[page - 1]
+        inherited_right = right.get("inherited", [None] * len(right["slides"]))[
+            page - 1
+        ]
+        inherited_unknown = any(
+            warning["page"] == page and warning["shape_id"] == "inherited"
+            for doc in (left, right)
+            for warning in doc.get("warnings", [])
+        )
+        if inherited_left != inherited_right or inherited_unknown:
             marker = {
                 "id": "inherited",
                 "name": "テーマ・マスター・レイアウト",
@@ -614,7 +619,11 @@ def compare(left, right, threshold=1):
                 {
                     "kind": "structure",
                     "highlight": "other",
-                    "fields": ["継承された書式・レイアウトの変更（要確認）"],
+                    "fields": [
+                        "継承された書式・レイアウトの解析が不完全（画像で要確認）"
+                        if inherited_unknown
+                        else "継承された書式・レイアウトの変更（要確認）"
+                    ],
                     "left": marker,
                     "right": marker,
                     "uncertain": True,

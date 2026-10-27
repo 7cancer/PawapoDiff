@@ -371,3 +371,38 @@ def test_diagnostics_do_not_need_writable_work_disk(tmp_path, monkeypatch):
                 "diagnostic-summary.txt"
             ).decode("utf-8-sig")
         assert not list((tmp_path / "work").iterdir())
+
+
+def test_missing_group_geometry_does_not_invent_child_movement(tmp_path):
+    source = tmp_path / "source.pptx"
+    p = deck(source)
+    group = p.slides[0].shapes.add_group_shape()
+    group.shapes.add_textbox(
+        Inches(1), Inches(1), Inches(2), Inches(1)
+    ).text = "グループ内の文章"
+    group.left += Inches(1)
+    group.width *= 2
+    p.save(source)
+    normal = engine.inspect(source)
+    group._element.grpSpPr.remove(group._element.grpSpPr.xfrm)
+    p.save(source)
+    partial = engine.inspect(source)
+    changes = engine.compare(normal, partial)["pages"][0]["changes"]
+    assert not any(change.get("highlight") in ("layout", "mixed") for change in changes)
+
+
+def test_unknown_inherited_format_is_not_called_a_confirmed_change(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.pptx"
+    deck(source)
+    normal = engine.inspect(source)
+
+    def unsupported(*args):
+        raise ValueError("unsupported template metadata")
+
+    monkeypatch.setattr(engine, "inherited_signature", unsupported)
+    partial = engine.inspect(source)
+    change = engine.compare(normal, partial)["pages"][0]["changes"][0]
+    assert "解析が不完全" in change["fields"][0]
+    assert change["uncertain"]

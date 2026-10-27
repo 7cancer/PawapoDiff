@@ -251,6 +251,10 @@ article strong {
   border-radius: 8px;
   margin: 16px 0;
 }
+.error pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.error h2, .analysis-warning h2 { font-size: 18px; }
+.analysis-warning { padding: 20px; margin-bottom: 24px; background: #fff8e8; border: 1px solid #e7c670; border-radius: 12px; }
+.analysis-warning details { max-height: 320px; overflow: auto; }
 footer {
   font-size: 12px;
   line-height: 1.8;

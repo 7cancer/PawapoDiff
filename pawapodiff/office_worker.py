@@ -17,6 +17,7 @@ def run_worker(request_path):
     from .diagnostics import configure_diagnostics
     from .render import _render_powerpoint, _error_detail
     from .engine import validate
+    from .errors import describe
 
     configure_diagnostics()
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
@@ -53,6 +54,11 @@ def run_worker(request_path):
         logging.getLogger(__name__).exception("Office worker failed at %s", stage)
         write_state(
             state_path,
-            {"status": "error", "stage": stage, "message": _error_detail(error)},
+            {
+                "status": "error",
+                "stage": stage,
+                "message": _error_detail(error),
+                "diagnostic": describe(error),
+            },
         )
         return 1

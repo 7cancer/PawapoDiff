@@ -47,6 +47,8 @@ def report(result, images):
         issues.append(
             f'<li>{esc(issue["kind"])} — {esc(issue["source"])} → {esc(text)}</li>'
         )
+    warnings = [f'<li>{"日本語原本" if warning["side"] == "left" else "英訳版"} p.{warning["page"]} / 図形ID {esc(warning["shape_id"])}: {esc(warning["message"])}</li>' for warning in result.get("warnings", [])]
+    warning_html = "<h2>解析が一部不完全です</h2><p>以下の要素は画像で確認してください。比較・翻訳チェックで未検出の可能性があります。</p><ul>" + "".join(warnings) + "</ul>" if warnings else ""
     rows = []
     for row in result.get("translations", []):
         css = "inconsistent" if row["inconsistent"] else ""
@@ -71,6 +73,7 @@ def report(result, images):
         + palette_css
         + "</style><h1>PawapoDiff 比較結果</h1><p>左：日本語原本 / 右：英訳版。翻訳検査は確認候補であり、誤訳の意味判定は行いません。画像内文字・SmartArt・グラフ内部は目視で確認してください。</p>"
         + legend
+        + warning_html
         + "<h2>翻訳漏れ・表記揺れチェック</h2><ul>"
         + ("".join(issues) or "<li>候補はありません。</li>")
         + "</ul>"

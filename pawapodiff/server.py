@@ -1,7 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from copy import deepcopy
+from io import BytesIO
 import logging
+import json
+import platform
+import struct
+import sys
+import time
 from pathlib import Path
 import secrets
 import shutil
@@ -13,10 +20,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageChops, ImageEnhance
 from pydantic import BaseModel, Field
-from .engine import inspect, compare, InputError
+from .engine import inspect, compare
 from .render import render, RenderError
 from .uploads import receive_presentations
 from .report import report
+from .errors import describe, readable
+from . import __version__
 
 
 @dataclass
@@ -27,6 +36,10 @@ class Job:
     documents: dict = field(default_factory=dict)
     images: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    diagnostic: dict | None = None
+    facts: dict = field(default_factory=dict)
+    events: list = field(default_factory=list)
+    started: float = field(default_factory=time.monotonic)
 
 
 class ThresholdRequest(BaseModel):
@@ -34,6 +47,9 @@ class ThresholdRequest(BaseModel):
 
 
 def create_app(token=None, root=None, renderer=render):
+    from .diagnostics import configure_diagnostics
+
+    configure_diagnostics()
     token = token or secrets.token_urlsafe(32)
     work = Path(root or tempfile.mkdtemp(prefix="PawapoDiff-"))
     work.mkdir(parents=True, exist_ok=True)
@@ -81,18 +97,58 @@ def create_app(token=None, root=None, renderer=render):
 
     def process(key, threshold):
         job = jobs[key]
+        document, stage = None, "資料の構造を解析中"
+
+        def update(label):
+            nonlocal stage
+            stage = label
+            job.message = f"{document or '比較'}: {label}"
+            event = {
+                "elapsed_seconds": round(time.monotonic() - job.started, 1),
+                "document": document,
+                "stage": label,
+            }
+            with job.lock:
+                job.events.append(event)
+                job.events[:] = job.events[-1500:]
+            logging.getLogger(__name__).info(
+                "job=%s document=%s stage=%s elapsed=%s",
+                key,
+                document,
+                label,
+                event["elapsed_seconds"],
+            )
+
         try:
-            job.status, job.message = "running", "資料の構造を解析中"
+            job.status = "running"
             for side in job.documents:
-                job.documents[side] = inspect(work / key / f"{side}.pptx")
+                document = "日本語原本" if side == "left" else "英訳版"
+                update("PPTXの内部構造を検査中")
+                job.documents[side] = inspect(
+                    work / key / f"{side}.pptx",
+                    progress=lambda page, total: update(
+                        f"構造を解析中 {page}/{total}ページ"
+                    ),
+                )
+                with job.lock:
+                    job.facts[side]["pages"] = len(job.documents[side]["slides"])
+                    job.facts[side]["analysis_warnings"] = job.documents[side].get(
+                        "warnings", []
+                    )
             if "right" in job.documents:
+                document = None
+                update("ページ数・寸法の確認と図形の比較")
                 job.result = compare(
                     job.documents["left"], job.documents["right"], threshold
                 )
-            job.message = "PowerPointでスライドを描画中"
             for side in job.documents:
+                document = "日本語原本" if side == "left" else "英訳版"
+                update(
+                    f"PowerPointで描画中（全{len(job.documents[side]['slides'])}ページ）"
+                )
+                options = {"progress": update} if renderer is render else {}
                 job.images[side] = renderer(
-                    work / key / f"{side}.pptx", work / key / side
+                    work / key / f"{side}.pptx", work / key / side, **options
                 )
                 if len(job.images[side]) != len(job.documents[side]["slides"]):
                     raise RenderError("描画されたページ数が一致しません。")
@@ -102,52 +158,140 @@ def create_app(token=None, root=None, renderer=render):
                 for i, (a, b) in enumerate(
                     zip(job.images["left"], job.images["right"]), 1
                 ):
+                    document = None
+                    update(f"画像差分を作成中 {i}/{len(job.images['left'])}ページ")
                     with Image.open(a) as ia, Image.open(b) as ib:
-                        diff = ImageChops.difference(
-                            ia.convert("RGB"), ib.convert("RGB")
-                        )
-                        ImageEnhance.Contrast(diff).enhance(3).save(
-                            diffdir / f"{i:04}.png"
-                        )
+                        with ia.convert("RGB") as ra, ib.convert("RGB") as rb:
+                            with ImageChops.difference(ra, rb) as diff:
+                                with ImageEnhance.Contrast(diff).enhance(3) as enhanced:
+                                    enhanced.save(diffdir / f"{i:04}.png")
+            update("完了")
             job.status, job.message = "done", "完了"
-        except (InputError, RenderError) as e:
-            job.status, job.message = "error", str(e)
-        except Exception:
-            logging.getLogger(__name__).exception("Unexpected job processing failure")
-            job.status, job.message = (
-                "error",
-                "処理に失敗しました。ファイル形式と空き容量を確認してください。",
+        except Exception as error:
+            logging.getLogger(__name__).exception(
+                "Job failed: job=%s document=%s stage=%s", key, document, stage
             )
+            job.diagnostic = describe(error, document=document, job_id=key)
+            job.diagnostic.setdefault("stage", stage)
+            job.message = readable(job.diagnostic)
+            job.status = "error"
 
     @app.get("/api/diagnostics")
     def diagnostics():
         from .diagnostics import diagnostic_files
 
         files = diagnostic_files()
-        if not files:
-            raise HTTPException(503, "診断ログの保存先を作成できません。")
-        archive = work / f"diagnostics-{secrets.token_hex(8)}.zip"
+        try:
+            free_bytes = shutil.disk_usage(work).free
+        except OSError:
+            free_bytes = None
+        snapshot = {
+            "app_version": __version__,
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "process_bits": struct.calcsize("P") * 8,
+            "work_disk_free_bytes": free_bytes,
+            "jobs": {},
+        }
+        for key, job in list(jobs.items()):
+            with job.lock:
+                snapshot["jobs"][key] = {
+                    "status": job.status,
+                    "message": job.message,
+                    "diagnostic": job.diagnostic,
+                    "files": deepcopy(job.facts),
+                    "elapsed_seconds": round(time.monotonic() - job.started, 1),
+                    "events": list(job.events),
+                }
+        summary = [
+            f"PawapoDiff {__version__} 診断サマリー",
+            f"OS: {snapshot['platform']} / Python {snapshot['python']} ({snapshot['process_bits']}bit)",
+            f"作業ドライブ空き容量: {f'{free_bytes / 1024**3:.1f}GB' if free_bytes is not None else '取得できませんでした'}",
+            "スライド本文・認証トークンはこのサマリーに含めません。",
+        ]
+        for key, entry in snapshot["jobs"].items():
+            summary.extend(
+                [
+                    "",
+                    f"ジョブ: {key} / 状態: {entry['status']}",
+                    f"経過: {entry['elapsed_seconds']}秒",
+                    f"資料: {entry['files']}",
+                    entry["message"],
+                ]
+            )
+            if entry["diagnostic"]:
+                summary.append(
+                    json.dumps(entry["diagnostic"], ensure_ascii=False, indent=2)
+                )
+            summary.extend(
+                f"  +{event['elapsed_seconds']}秒 {event['document'] or '比較'}: {event['stage']}"
+                for event in entry["events"]
+            )
+        if not snapshot["jobs"]:
+            summary.append(
+                "この起動では、まだ比較ジョブがありません。エラーが起きた画面で診断ログを保存してください。"
+            )
+        # Diagnostics must still be downloadable when the work disk is full.
+        archive = BytesIO()
         with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:
+            bundle.writestr(
+                "diagnostic-summary.txt", "\n".join(summary).encode("utf-8-sig")
+            )
+            bundle.writestr(
+                "diagnostic-summary.json",
+                json.dumps(snapshot, ensure_ascii=False, indent=2),
+            )
             for path in files:
                 try:
                     bundle.write(path, path.name)
                 except OSError:
                     continue
-        return FileResponse(
-            archive, filename="PawapoDiff-diagnostics.zip", media_type="application/zip"
+        return Response(
+            archive.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="PawapoDiff-diagnostics.zip"'
+            },
         )
 
     @app.post("/api/jobs")
     async def new_job(request: Request):
         key = secrets.token_hex(12)
         directory = work / key
-        directory.mkdir()
         try:
+            directory.mkdir()
             threshold = await receive_presentations(request, directory)
-        except BaseException:
+            facts = {
+                side: {"bytes": (directory / f"{side}.pptx").stat().st_size}
+                for side in ("left", "right")
+            }
+        except BaseException as error:
+            logging.getLogger(__name__).exception("Upload failed: job=%s", key)
+            if isinstance(error, Exception):
+                diagnostic = describe(
+                    error, stage="アップロードの受信・保存", job_id=key
+                )
+                if isinstance(error, HTTPException):
+                    diagnostic.update(
+                        code=f"UPLOAD_HTTP_{error.status_code}",
+                        summary=str(error.detail),
+                    )
+                jobs[key] = Job(
+                    status="error", message=readable(diagnostic), diagnostic=diagnostic
+                )
             shutil.rmtree(directory, ignore_errors=True)
+            if isinstance(error, Exception) and not isinstance(error, HTTPException):
+                raise HTTPException(
+                    507 if isinstance(error, OSError) else 500, readable(diagnostic)
+                ) from error
             raise
-        jobs[key] = Job(documents={"left": {}, "right": {}})
+        jobs[key] = Job(
+            documents={"left": {}, "right": {}},
+            facts=facts,
+        )
+        logging.getLogger(__name__).info(
+            "Upload accepted: job=%s bytes=%s", key, jobs[key].facts
+        )
         pool.submit(process, key, threshold)
         return {"id": key}
 
@@ -157,6 +301,8 @@ def create_app(token=None, root=None, renderer=render):
         return {
             "status": job.status,
             "message": job.message,
+            "diagnostic": job.diagnostic,
+            "elapsed_seconds": round(time.monotonic() - job.started, 1),
             "result": job.result if job.status == "done" else None,
             "pages": (
                 len(job.documents.get("left", {}).get("slides", []))
@@ -202,8 +348,6 @@ def create_app(token=None, root=None, renderer=render):
                 "Content-Disposition": 'attachment; filename="PawapoDiff-report.html"'
             },
         )
-
-    import sys
 
     static = (
         Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))

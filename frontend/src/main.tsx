@@ -32,6 +32,7 @@ type Translation = {
   notes: string[];
 };
 type Result = {
+  warnings?: { side: string; page: number; shape_id: string; message: string }[];
   translations: Translation[];
   width: number;
   height: number;
@@ -39,6 +40,8 @@ type Result = {
   issues: Issue[];
 };
 type Status = {
+  diagnostic?: { code: string; summary: string; actions: string[]; document?: string; stage?: string; page?: number; part?: string; shape_id?: string; technical?: string; cleanup?: string } | null;
+  elapsed_seconds?: number;
   status: string;
   message: string;
   result: Result | null;
@@ -82,6 +85,7 @@ function App() {
     [status, setStatus] = useState<Status | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [logError, setLogError] = useState("");
   const [page, setPage] = useState(1),
     [threshold, setThreshold] = useState(1),
     [mode, setMode] = useState("pair"),
@@ -153,6 +157,8 @@ function App() {
       return;
     }
     setError("");
+    setLogError("");
+    setJob("");
     setBusy(true);
     setStatus(null);
     setImages({});
@@ -262,20 +268,28 @@ function App() {
         </section>
         {error && (
           <div role="alert" className="error">
-            <p style={{ whiteSpace: "pre-wrap" }}>{error}</p>
+            {status?.status === "error" && status.diagnostic ? (
+              <>
+                <h2>{status.diagnostic.summary}</h2>
+                <p>対象: {status.diagnostic.document || "比較処理"} ／ 処理: {status.diagnostic.stage}
+                  {status.diagnostic.page ? ` ／ ${status.diagnostic.page}ページ` : ""}</p>
+                <p>エラーコード: <code>{status.diagnostic.code}</code></p>
+                <ul>{status.diagnostic.actions.map((action, index) => <li key={index}>{action}</li>)}</ul>
+                <details><summary>技術情報（問い合わせ用）</summary><pre>{JSON.stringify(status.diagnostic, null, 2)}</pre></details>
+              </>
+            ) : <p style={{ whiteSpace: "pre-wrap" }}>{error}</p>}
             <button
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
+                setLogError("");
                 try {
                   await download(
                     await api("diagnostics"),
                     "PawapoDiff-diagnostics.zip",
                   );
                 } catch (e) {
-                  setError(
-                    error + "\n診断ログの保存に失敗しました: " + String(e),
-                  );
+                  setLogError("診断ログの保存に失敗しました: " + String(e));
                 } finally {
                   setBusy(false);
                 }
@@ -283,11 +297,19 @@ function App() {
             >
               診断ログを保存
             </button>
+            {logError && <p>{logError}</p>}
           </div>
         )}
-        {status && <p aria-live="polite">{status.message}</p>}
+        {busy && !status && <p aria-live="polite">資料を作業フォルダーへ転送中。大容量の場合は時間がかかります。</p>}
+        {status && status.status !== "error" && <p aria-live="polite">{status.message} {status.status === "running" ? `（経過 ${Math.floor(status.elapsed_seconds || 0)}秒）` : ""}</p>}
         {status?.status === "done" && (
           <>
+            {!!result?.warnings?.length && <section className="analysis-warning" role="status">
+              <h2>一部の要素は解析できませんでした（{result.warnings.length}項目）</h2>
+              <p>比較・翻訳チェックには不完全な箇所があります。該当ページを画像で確認してください。</p>
+              <details><summary>対象ページと要素を表示</summary><ul>{result.warnings.map((warning, index) =>
+                <li key={index}>{warning.side === "left" ? "日本語原本" : "英訳版"} {warning.page}ページ ／ 図形ID {warning.shape_id}: {warning.message}</li>)}</ul></details>
+            </section>}
             <section className="workspace">
               <nav>
                 <h3>

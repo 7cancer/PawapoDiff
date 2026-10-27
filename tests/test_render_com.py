@@ -256,6 +256,7 @@ def test_permanent_member_errors_are_not_retried():
 
 def test_busy_retry_budget_is_bounded():
     attempts = []
+    delays = []
 
     def action():
         attempts.append(1)
@@ -265,9 +266,10 @@ def test_busy_retry_budget_is_bounded():
         _retry_com(
             action,
             SimpleNamespace(PumpWaitingMessages=lambda: None),
-            sleep=lambda _: None,
+            sleep=delays.append,
         )
-    assert len(attempts) == 4
+    assert len(attempts) == 8
+    assert sum(delays) == 9 and max(delays) == 2
 
 
 def test_diagnostic_write_failure_cannot_prevent_security_restoration(tmp_path):

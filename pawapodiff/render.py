@@ -11,11 +11,12 @@ import tempfile
 import time
 from PIL import Image
 from .engine import validate
+from .errors import DiagnosticError, office_diagnostic
 
 logger = logging.getLogger(__name__)
 
 
-class RenderError(RuntimeError):
+class RenderError(DiagnosticError, RuntimeError):
     pass
 
 
@@ -32,7 +33,9 @@ def _read_state(path):
         return {}
 
 
-def _run_worker(command, state_path, stderr_path, *, timeout=300):
+def _run_worker(
+    command, state_path, stderr_path, *, timeout=300, open_timeout=None, progress=None
+):
     """Bound inactivity of our Python worker, never terminate PowerPoint processes."""
     last_progress = time.monotonic()
     last_stamp = None
@@ -53,10 +56,32 @@ def _run_worker(command, state_path, stderr_path, *, timeout=300):
                     stamp = None
                 if stamp != last_stamp:
                     last_stamp, last_progress = stamp, time.monotonic()
-                if time.monotonic() - last_progress >= timeout:
-                    stage = _read_state(state_path).get("stage", "描画ワーカーの起動")
+                    if progress and stamp is not None:
+                        try:
+                            progress(
+                                _read_state(state_path).get(
+                                    "stage", "描画ワーカーの起動"
+                                )
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Could not report Office progress", exc_info=True
+                            )
+                stage = _read_state(state_path).get("stage", "描画ワーカーの起動")
+                stage_timeout = (
+                    (open_timeout or timeout)
+                    if "資料を読み取り専用で開く" in stage
+                    else timeout
+                )
+                if time.monotonic() - last_progress >= stage_timeout:
                     raise RenderError(
-                        f"PowerPointの処理が{timeout:g}秒間応答しないため中断しました（{stage}）。PowerPoint自体は終了していません。設定の復元ができていない可能性があるため、資料を保存してPowerPointを再起動してください。"
+                        f"PowerPointの処理が{stage_timeout:g}秒間応答しないため中断しました（{stage}）。PowerPoint自体は終了していません。設定の復元ができていない可能性があるため、資料を保存してPowerPointを再起動してください。",
+                        code="POWERPOINT_TIMEOUT",
+                        stage=stage,
+                        actions=[
+                            "PowerPointのダイアログ・サインイン・権限保護を確認してください。",
+                            "開いている資料を保存してPowerPointを再起動し、大きな資料は分割してお試しください。",
+                        ],
                     )
                 time.sleep(0.1)
         finally:
@@ -69,7 +94,10 @@ def _run_worker(command, state_path, stderr_path, *, timeout=300):
                     process.wait(timeout=5)
         state = _read_state(state_path)
         if state.get("status") == "error":
-            raise RenderError(state.get("message", "PowerPointの描画に失敗しました。"))
+            raise RenderError(
+                state.get("message", "PowerPointの描画に失敗しました。"),
+                **state.get("diagnostic", {}),
+            )
         if process.returncode != 0 or state.get("status") != "done":
             stderr.seek(0)
             logger.error(
@@ -78,12 +106,17 @@ def _run_worker(command, state_path, stderr_path, *, timeout=300):
                 stderr.read(8000),
             )
             raise RenderError(
-                f"描画ワーカーが正常に完了しませんでした（終了コード{process.returncode}）。診断ログを確認してください。"
+                f"描画ワーカーが正常に完了しませんでした（終了コード{process.returncode}）。診断ログを確認してください。",
+                code="WORKER_EXITED",
+                stage=state.get("stage"),
+                actions=[
+                    "セキュリティ製品による子プロセスの制限や、メモリ不足を確認してください。"
+                ],
             )
         return state
 
 
-def render(path, destination, width=3840, *, timeout=300):
+def render(path, destination, width=3840, *, timeout=300, progress=None):
     validate(path)
     if sys.platform != "win32":
         raise RenderError(
@@ -102,6 +135,16 @@ def render(path, destination, width=3840, *, timeout=300):
         ) as directory:
             work = Path(directory)
             private_source = work / "private-input.pptx"
+            if progress:
+                progress("描画専用の一時コピーを作成中")
+            if shutil.disk_usage(work).free < Path(path).stat().st_size:
+                raise RenderError(
+                    "描画用の一時コピーを作る空き容量がありません。",
+                    code="DISK_FULL",
+                    actions=[
+                        "Windowsの一時フォルダーがあるドライブの空き容量を増やしてください。"
+                    ],
+                )
             shutil.copyfile(path, private_source)
             request = work / "request.json"
             state_path = work / "state.json"
@@ -122,6 +165,8 @@ def render(path, destination, width=3840, *, timeout=300):
                 state_path,
                 work / "stderr.log",
                 timeout=timeout,
+                open_timeout=max(timeout, 900),
+                progress=progress,
             )
             names = state.get("images", [])
             if not names or any(
@@ -137,7 +182,11 @@ def render(path, destination, width=3840, *, timeout=300):
     except Exception as error:
         logger.exception("PowerPoint rendering failed")
         if isinstance(error, RenderError):
-            raise RenderError(f"{error}\n診断ログ: {log_path}") from error
+            raise RenderError(
+                f"{error}\n診断ログ: {log_path}", **error.diagnostic
+            ) from error
+        if isinstance(error, (OSError, MemoryError)):
+            raise
         raise RenderError(
             f"PowerPointの描画準備に失敗しました。{_error_detail(error)}\n診断ログ: {log_path}"
         ) from error
@@ -165,19 +214,19 @@ def _error_detail(error):
 def _retry_com(action, com, *, sleep=time.sleep):
     # Only retry RPC rejections that explicitly mean the server did not execute
     # the call. Do not retry invalid members, file errors, or arbitrary exceptions.
-    for attempt in range(4):
+    for attempt in range(8):
         try:
             return action()
         except Exception as error:
             code = getattr(error, "hresult", 0) or 0
-            if (code & 0xFFFFFFFF) not in (0x80010001, 0x8001010A) or attempt == 3:
+            if (code & 0xFFFFFFFF) not in (0x80010001, 0x8001010A) or attempt == 7:
                 raise
             logger.info("Office busy; retry %s", attempt + 1)
             try:
                 com.PumpWaitingMessages()
             except Exception:
                 logger.warning("Could not pump Office messages", exc_info=True)
-            sleep(0.2 * 2**attempt)
+            sleep(min(2, 0.2 * 2**attempt))
 
 
 def _render_powerpoint(
@@ -260,9 +309,11 @@ def _render_powerpoint(
             raise RenderError("描画するスライドがありません。")
         for i in range(1, count + 1):
             target = destination / f"{i:04}.png"
-            slide = operation(f"スライド{i}の取得", lambda i=i: slides.Item(i))
+            slide = operation(
+                f"スライド{i}の取得（{i}/{count}ページ）", lambda i=i: slides.Item(i)
+            )
             operation(
-                f"スライド{i}のPNG出力",
+                f"スライド{i}のPNG出力（{i}/{count}ページ）",
                 lambda: slide.Export(str(target.resolve()), "PNG", width, height),
             )
             operation(f"スライド{i}の出力画像の確認", lambda: None)
@@ -276,8 +327,11 @@ def _render_powerpoint(
             slide = None
     except Exception as error:
         logger.exception("Office operation failed at %s", stage)
+        diagnostic = office_diagnostic(error, stage)
+        diagnostic["technical"] = _error_detail(error)
         failure = RenderError(
-            f"PowerPointの処理に失敗しました（{stage}）。{_error_detail(error)}"
+            f"PowerPointの処理に失敗しました（{stage}）。{_error_detail(error)}",
+            **diagnostic,
         )
     finally:
         if document_owned and presentation is not None:
@@ -309,7 +363,16 @@ def _render_powerpoint(
         failure = RenderError(
             f"{failure}\n後処理でも問題が発生しました: {detail}"
             if failure
-            else f"画像生成後の後処理に失敗しました: {detail}"
+            else f"画像生成後の後処理に失敗しました: {detail}",
+            **(
+                dict(failure.diagnostic, cleanup=detail)
+                if failure
+                else {
+                    "code": "OFFICE_CLEANUP_FAILED",
+                    "stage": stage,
+                    "cleanup": detail,
+                }
+            ),
         )
     if failure:
         raise failure

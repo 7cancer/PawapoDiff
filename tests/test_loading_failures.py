@@ -247,7 +247,7 @@ def test_input_error_is_logged_and_summary_is_never_empty(
             assert (
                 "INVALID_PACKAGE" in summary
                 and "日本語原本" in summary
-                and "0.2.1" in summary
+                and "0.3.0" in summary
             )
             assert len(z.read("diagnostic-summary.json")) > 100
 

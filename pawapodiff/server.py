@@ -132,6 +132,9 @@ def create_app(token=None, root=None, renderer=render):
                 )
                 with job.lock:
                     job.facts[side]["pages"] = len(job.documents[side]["slides"])
+                    job.facts[side]["media_notices"] = job.documents[side].get(
+                        "notices", []
+                    )
                     job.facts[side]["analysis_warnings"] = job.documents[side].get(
                         "warnings", []
                     )

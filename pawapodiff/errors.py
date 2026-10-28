@@ -15,6 +15,10 @@ class DiagnosticError(Exception):
         }
 
 
+class InputError(DiagnosticError, ValueError):
+    pass
+
+
 def describe(error, **context):
     data = dict(getattr(error, "diagnostic", {}))
     if not data:

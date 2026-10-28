@@ -23,7 +23,17 @@ type Issue = {
   page?: number;
   entries?: Entry[];
 };
+type Occurrence = {
+  page: number;
+  shape: string;
+  source_line: number;
+  target: string;
+  uncertain: boolean;
+};
 type Translation = {
+  pages: number[];
+  entries: Occurrence[];
+  variants: { target: string; entries: Occurrence[] }[];
   page: number;
   shape: string;
   source: string;
@@ -32,7 +42,18 @@ type Translation = {
   notes: string[];
 };
 type Result = {
-  warnings?: { side: string; page: number; shape_id: string; message: string }[];
+  notices?: {
+    side: string;
+    page: number | null;
+    shape_id: string;
+    message: string;
+  }[];
+  warnings?: {
+    side: string;
+    page: number;
+    shape_id: string;
+    message: string;
+  }[];
   translations: Translation[];
   width: number;
   height: number;
@@ -40,7 +61,18 @@ type Result = {
   issues: Issue[];
 };
 type Status = {
-  diagnostic?: { code: string; summary: string; actions: string[]; document?: string; stage?: string; page?: number; part?: string; shape_id?: string; technical?: string; cleanup?: string } | null;
+  diagnostic?: {
+    code: string;
+    summary: string;
+    actions: string[];
+    document?: string;
+    stage?: string;
+    page?: number;
+    part?: string;
+    shape_id?: string;
+    technical?: string;
+    cleanup?: string;
+  } | null;
   elapsed_seconds?: number;
   status: string;
   message: string;
@@ -91,6 +123,10 @@ function App() {
     [mode, setMode] = useState("pair"),
     [alpha, setAlpha] = useState(0.5),
     [marks, setMarks] = useState(true);
+  const [activeChange, setActiveChange] = useState<number | null>(null);
+  useEffect(() => {
+    setActiveChange(null);
+  }, [page, job, marks, mode, status?.result]);
   const [images, setImages] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!job) return;
@@ -190,35 +226,68 @@ function App() {
   }
   const result = status?.result,
     changes = result?.pages[page - 1]?.changes || [];
+  function activateChange(index: number, revealList = false) {
+    if (!marks) return;
+    setActiveChange(index);
+    if (revealList) {
+      const entry = document.getElementById(`change-${page}-${index}`);
+      const list = entry?.parentElement;
+      if (entry && list) {
+        const offset =
+          entry.getBoundingClientRect().top - list.getBoundingClientRect().top;
+        if (offset < 0 || offset + entry.offsetHeight > list.clientHeight) {
+          list.scrollTop += offset;
+        }
+      }
+    }
+  }
+  function goToPage(next: number) {
+    setPage(next);
+    document
+      .querySelector(".workspace")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   function slide(s: string) {
     return (
       <div className="slide">
         {images[s] && (
           <img
             src={images[s]}
-            alt={`${s === "left" ? "原本" : "英訳版"} ${page}ページ`}
+            alt={`${s === "left" ? "原本" : s === "right" ? "英訳版" : "画像差分"} ${page}ページ`}
           />
         )}
         {marks &&
           result &&
-          changes
-            .filter((c) => c.kind === "structure")
-            .map((c, i) => {
-              const b = (s === "left" ? c.left : c.right)?.box;
-              return b ? (
-                <span
-                  key={i}
-                  className={"mark " + (c.highlight || "other")}
-                  title={c.fields.join(" / ")}
+          changes.map((c, index) => {
+            if (c.kind !== "structure" && activeChange !== index) return null;
+            return (s === "diff" ? ["left", "right"] : [s]).map((side) => {
+              const item = side === "left" ? c.left : c.right;
+              if (!item) return null;
+              const b = item.box;
+              return (
+                <button
+                  type="button"
+                  key={`${index}-${side}`}
+                  className={`mark ${c.highlight || "other"}${activeChange === index ? " active" : ""}`}
+                  data-change={index}
+                  aria-label={`変更 ${index + 1}: ${item.name}`}
+                  title={`${index + 1}. ${c.fields.join(" / ")}`}
+                  onMouseEnter={() => activateChange(index, true)}
+                  onMouseLeave={() => setActiveChange(null)}
+                  onFocus={() => activateChange(index, true)}
+                  onBlur={() => setActiveChange(null)}
                   style={{
                     left: (b[0] / result.width) * 100 + "%",
                     top: (b[1] / result.height) * 100 + "%",
                     width: (b[2] / result.width) * 100 + "%",
                     height: (b[3] / result.height) * 100 + "%",
                   }}
-                />
-              ) : null;
-            })}
+                >
+                  <span className="mark-number">{index + 1}</span>
+                </button>
+              );
+            });
+          })}
       </div>
     );
   }
@@ -271,13 +340,29 @@ function App() {
             {status?.status === "error" && status.diagnostic ? (
               <>
                 <h2>{status.diagnostic.summary}</h2>
-                <p>対象: {status.diagnostic.document || "比較処理"} ／ 処理: {status.diagnostic.stage}
-                  {status.diagnostic.page ? ` ／ ${status.diagnostic.page}ページ` : ""}</p>
-                <p>エラーコード: <code>{status.diagnostic.code}</code></p>
-                <ul>{status.diagnostic.actions.map((action, index) => <li key={index}>{action}</li>)}</ul>
-                <details><summary>技術情報（問い合わせ用）</summary><pre>{JSON.stringify(status.diagnostic, null, 2)}</pre></details>
+                <p>
+                  対象: {status.diagnostic.document || "比較処理"} ／ 処理:{" "}
+                  {status.diagnostic.stage}
+                  {status.diagnostic.page
+                    ? ` ／ ${status.diagnostic.page}ページ`
+                    : ""}
+                </p>
+                <p>
+                  エラーコード: <code>{status.diagnostic.code}</code>
+                </p>
+                <ul>
+                  {status.diagnostic.actions.map((action, index) => (
+                    <li key={index}>{action}</li>
+                  ))}
+                </ul>
+                <details>
+                  <summary>技術情報（問い合わせ用）</summary>
+                  <pre>{JSON.stringify(status.diagnostic, null, 2)}</pre>
+                </details>
               </>
-            ) : <p style={{ whiteSpace: "pre-wrap" }}>{error}</p>}
+            ) : (
+              <p style={{ whiteSpace: "pre-wrap" }}>{error}</p>
+            )}
             <button
               disabled={busy}
               onClick={async () => {
@@ -300,16 +385,66 @@ function App() {
             {logError && <p>{logError}</p>}
           </div>
         )}
-        {busy && !status && <p aria-live="polite">資料を作業フォルダーへ転送中。大容量の場合は時間がかかります。</p>}
-        {status && status.status !== "error" && <p aria-live="polite">{status.message} {status.status === "running" ? `（経過 ${Math.floor(status.elapsed_seconds || 0)}秒）` : ""}</p>}
+        {busy && !status && (
+          <p aria-live="polite">
+            資料を作業フォルダーへ転送中。大容量の場合は時間がかかります。
+          </p>
+        )}
+        {status && status.status !== "error" && (
+          <p aria-live="polite">
+            {status.message}{" "}
+            {status.status === "running"
+              ? `（経過 ${Math.floor(status.elapsed_seconds || 0)}秒）`
+              : ""}
+          </p>
+        )}
         {status?.status === "done" && (
           <>
-            {!!result?.warnings?.length && <section className="analysis-warning" role="status">
-              <h2>一部の要素は解析できませんでした（{result.warnings.length}項目）</h2>
-              <p>比較・翻訳チェックには不完全な箇所があります。該当ページを画像で確認してください。</p>
-              <details><summary>対象ページと要素を表示</summary><ul>{result.warnings.map((warning, index) =>
-                <li key={index}>{warning.side === "left" ? "日本語原本" : "英訳版"} {warning.page}ページ ／ 図形ID {warning.shape_id}: {warning.message}</li>)}</ul></details>
-            </section>}
+            {!!result?.notices?.length && (
+              <section className="media-notice">
+                <h2>動画・音声は静止画として比較します</h2>
+                <p>
+                  動画本体の差分は判定しません。再生・外部参照・参照回復は行わず、元のファイルも変更しません。
+                </p>
+                <details>
+                  <summary>
+                    除外した再生情報（{result.notices.length}項目）
+                  </summary>
+                  <ul>
+                    {result.notices.map((notice, index) => (
+                      <li key={index}>
+                        {notice.side === "left" ? "日本語原本" : "英訳版"}{" "}
+                        {notice.page ? `${notice.page}ページ` : "共通パーツ"} ／
+                        図形ID {notice.shape_id}: {notice.message}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            )}
+            {!!result?.warnings?.length && (
+              <section className="analysis-warning" role="status">
+                <h2>
+                  一部の要素は解析できませんでした（{result.warnings.length}
+                  項目）
+                </h2>
+                <p>
+                  比較・翻訳チェックには不完全な箇所があります。該当ページを画像で確認してください。
+                </p>
+                <details>
+                  <summary>対象ページと要素を表示</summary>
+                  <ul>
+                    {result.warnings.map((warning, index) => (
+                      <li key={index}>
+                        {warning.side === "left" ? "日本語原本" : "英訳版"}{" "}
+                        {warning.page}ページ ／ 図形ID {warning.shape_id}:{" "}
+                        {warning.message}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            )}
             <section className="workspace">
               <nav>
                 <h3>
@@ -345,13 +480,14 @@ function App() {
                         <option value="overlay">重ね合わせ</option>
                         <option value="diff">画像差分（補助）</option>
                       </select>
-                      <label>
+                      <label className="highlight-toggle">
                         <input
+                          aria-label="ハイライト表示"
                           type="checkbox"
                           checked={marks}
                           onChange={(e) => setMarks(e.target.checked)}
                         />
-                        ハイライト
+                        ハイライト表示（{marks ? "ON" : "OFF"}）
                       </label>
                     </>
                   )}
@@ -387,7 +523,7 @@ function App() {
                     <p>
                       文字の翻訳も差分に含まれます。明るい箇所が画像上の変更です。
                     </p>
-                    <img className="diff" src={images.diff} alt="画像差分" />
+                    {slide("diff")}
                   </>
                 ) : (
                   <div className="pair">
@@ -438,12 +574,26 @@ function App() {
                         再判定
                       </button>
                     </div>
+                    <p className="interaction-help">
+                      図の番号にカーソルを合わせると、対応する変更が一覧で強調されます。一覧からも図を確認できます。
+                    </p>
                     <div className="changes">
                       {changes.length === 0 ? (
                         <p>検出された変更はありません。</p>
                       ) : (
                         changes.map((c, i) => (
-                          <article key={i}>
+                          <article
+                            key={i}
+                            id={`change-${page}-${i}`}
+                            data-change={i}
+                            className={activeChange === i ? "active" : ""}
+                            tabIndex={0}
+                            onMouseEnter={() => activateChange(i)}
+                            onMouseLeave={() => setActiveChange(null)}
+                            onFocus={() => activateChange(i)}
+                            onBlur={() => setActiveChange(null)}
+                          >
+                            <span className="change-number">{i + 1}</span>
                             <span
                               className={
                                 "badge " +
@@ -516,11 +666,10 @@ function App() {
                 ))}
                 {!result.issues.length && <p>候補はありません。</p>}
                 <h3>
-                  全文章の日英比較表{" "}
-                  <small>{result.translations.length} 件</small>
+                  日英比較表 <small>{result.translations.length} 件</small>
                 </h3>
                 <p>
-                  全ページのテキストボックス・表セル単位で表示します。同一原文は空白・改行を正規化して集約します。
+                  改行ごとに分割し、原文側が2文字以下の行は省略します。同じ原文を全ページから1行にまとめ、英訳ごとに出現ページを表示します。改行数が異なる場合は対応を要確認とします。
                 </p>
                 <div className="translation-table-wrap">
                   <table className="translation-table">
@@ -539,23 +688,52 @@ function App() {
                           className={row.inconsistent ? "inconsistent" : ""}
                         >
                           <td>
-                            <button
-                              onClick={() => {
-                                setPage(row.page);
-                                document
-                                  .querySelector(".workspace")
-                                  ?.scrollIntoView({
-                                    behavior: "smooth",
-                                    block: "start",
-                                  });
-                              }}
-                            >
-                              p.{row.page}
-                            </button>
-                            <small>{row.shape}</small>
+                            <div className="page-links">
+                              {row.pages.map((number) => (
+                                <button
+                                  key={number}
+                                  onClick={() => goToPage(number)}
+                                >
+                                  p.{number}
+                                </button>
+                              ))}
+                            </div>
+                            <small>{row.entries.length} 箇所</small>
+                            <details>
+                              <summary>要素と行を表示</summary>
+                              {row.entries.map((entry, j) => (
+                                <small key={j}>
+                                  p.{entry.page} ／ {entry.shape} ／{" "}
+                                  {entry.source_line}行目
+                                  {entry.uncertain ? "（要確認）" : ""}
+                                </small>
+                              ))}
+                            </details>
                           </td>
-                          <td>{row.source || "（原文なし）"}</td>
-                          <td>{row.target || "（訳文なし）"}</td>
+                          <td>{row.source}</td>
+                          <td>
+                            {row.variants.map((variant, j) => (
+                              <div className="translation-variant" key={j}>
+                                <div>{variant.target || "（訳文なし）"}</div>
+                                <div className="page-links">
+                                  {Array.from(
+                                    new Set(
+                                      variant.entries.map(
+                                        (entry) => entry.page,
+                                      ),
+                                    ),
+                                  ).map((number) => (
+                                    <button
+                                      key={number}
+                                      onClick={() => goToPage(number)}
+                                    >
+                                      p.{number}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </td>
                           <td>
                             {row.notes.length
                               ? row.notes.map((note) => (

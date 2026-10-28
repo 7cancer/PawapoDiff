@@ -192,7 +192,11 @@ h4 {
   position: absolute;
   border: 2px solid #e87536;
   background: #fbaa3520;
-  pointer-events: none;
+  pointer-events: auto;
+  padding: 0;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 0;
 }
 .overlay {
   position: relative;
@@ -251,10 +255,27 @@ article strong {
   border-radius: 8px;
   margin: 16px 0;
 }
-.error pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
-.error h2, .analysis-warning h2 { font-size: 18px; }
-.analysis-warning { padding: 20px; margin-bottom: 24px; background: #fff8e8; border: 1px solid #e7c670; border-radius: 12px; }
-.analysis-warning details { max-height: 320px; overflow: auto; }
+.error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}
+.error h2,
+.analysis-warning h2 {
+  font-size: 18px;
+}
+.analysis-warning {
+  padding: 20px;
+  margin-bottom: 24px;
+  background: #fff8e8;
+  border: 1px solid #e7c670;
+  border-radius: 12px;
+}
+.analysis-warning details {
+  max-height: 320px;
+  overflow: auto;
+}
 footer {
   font-size: 12px;
   line-height: 1.8;
@@ -393,4 +414,91 @@ footer {
   color: #92400e;
   font-size: 12px;
   margin-bottom: 6px;
+}
+
+.highlight-toggle {
+  padding: 8px 12px;
+  background: #e5f2f1;
+  border-radius: 7px;
+  font-weight: 600;
+}
+.highlight-toggle input {
+  accent-color: #167b83;
+  width: 17px;
+  height: 17px;
+}
+.mark-number {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  padding: 2px 5px;
+  background: #243249;
+  color: white;
+  font-size: 10px;
+  line-height: 1.2;
+  border-radius: 2px;
+}
+.mark.active {
+  outline: 3px solid #0891b2;
+  outline-offset: 2px;
+  background: #22d3ee35;
+}
+.mark.active .mark-number {
+  z-index: 4;
+  background: #0891b2;
+}
+.changes article {
+  padding: 14px 10px;
+  scroll-margin: 8px;
+  border-left: 4px solid transparent;
+}
+.changes article.active {
+  border-left-color: #0891b2;
+  background: #e0f7fa;
+}
+.change-number {
+  display: inline-block;
+  min-width: 24px;
+  margin-right: 8px;
+  font-weight: bold;
+  color: #126e77;
+}
+.interaction-help {
+  color: #6b7789;
+  font-size: 12px;
+}
+.overlay > div + div {
+  pointer-events: none;
+}
+.overlay .mark {
+  pointer-events: auto;
+}
+.media-notice {
+  padding: 20px;
+  margin-bottom: 24px;
+  background: #eef7fc;
+  border: 1px solid #bfd6e6;
+  border-radius: 12px;
+}
+.media-notice h2 {
+  font-size: 18px;
+}
+.media-notice details {
+  max-height: 280px;
+  overflow: auto;
+}
+.page-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.page-links button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.translation-variant + .translation-variant {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #d2dce8;
 }

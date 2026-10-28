@@ -12,6 +12,7 @@ import time
 from PIL import Image
 from .engine import validate
 from .errors import DiagnosticError, office_diagnostic
+from .media import prepare_copy
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def _run_worker(
 
 
 def render(path, destination, width=3840, *, timeout=300, progress=None):
-    validate(path)
+    media_plan = validate(path)
     if sys.platform != "win32":
         raise RenderError(
             "画像描画にはWindows版Microsoft PowerPointが必要です。この環境では実行できません。"
@@ -145,7 +146,7 @@ def render(path, destination, width=3840, *, timeout=300, progress=None):
                         "Windowsの一時フォルダーがあるドライブの空き容量を増やしてください。"
                     ],
                 )
-            shutil.copyfile(path, private_source)
+            prepare_copy(path, private_source, media_plan)
             request = work / "request.json"
             state_path = work / "state.json"
             request.write_text(

@@ -131,8 +131,9 @@ def test_embedded_report_escapes_untrusted_text(tmp_path):
         {"left": [image], "right": [image]},
     )
     assert "data:image/png;base64," in content and "&lt;script&gt;" in content
-    assert "<script>" not in content and "https://" not in content
-    assert "全文章の日英比較表" in content and "表記揺らぎの可能性あり" in content
+    assert content.count("<script>") == 1  # Only our fixed offline interaction script.
+    assert "https://" not in content
+    assert "日英比較表" in content and "表記揺らぎの可能性あり" in content
 
 
 @pytest.mark.skipif(

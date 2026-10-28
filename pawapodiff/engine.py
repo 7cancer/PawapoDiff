@@ -1,30 +1,19 @@
 """Read-only OOXML inspection; geometry is expressed in slide points."""
 
-from collections import defaultdict
 from io import BytesIO
 from hashlib import sha256
 import logging
-import posixpath
-import re
 import zlib
-from urllib.parse import unquote
 from zipfile import ZipFile, BadZipFile
 from lxml import etree
 from pptx import Presentation
 from pptx.shapes.picture import Picture
 from .limits import MAX_EXPANDED_BYTES, MAX_XML_PART_BYTES, MAX_XML_TOTAL_BYTES
-from .errors import DiagnosticError
+from .errors import InputError
+from .media import plan_media, target_part
+from .translations import normalize, translation_table
 
 EMU = 12700
-JP = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
-
-
-class InputError(DiagnosticError, ValueError):
-    pass
-
-
-def normalize(text):
-    return " ".join(text.split())
 
 
 def validate(path):
@@ -88,6 +77,7 @@ def validate(path):
                         "PowerPointの「名前を付けて保存」で「Strict」ではない「PowerPointプレゼンテーション (*.pptx)」を選択してください。"
                     ],
                 )
+            media_plan = plan_media(z)
             for name in names:
                 part = name
                 if "vbaproject" in name.lower() or "activex" in name.lower():
@@ -96,9 +86,13 @@ def validate(path):
                         code="ACTIVE_CONTENT",
                         part=name,
                     )
+                if name in media_plan.removed:
+                    continue
                 if name.endswith(".rels"):
                     root = etree.fromstring(
-                        z.read(name),
+                        media_plan.replacements[name]
+                        if name in media_plan.replacements
+                        else z.read(name),
                         etree.XMLParser(resolve_entities=False, no_network=True),
                     )
                     # External media/OLE are not opened. Hyperlinks are safe to render without following.
@@ -117,16 +111,7 @@ def validate(path):
                                     ],
                                 )
                         else:
-                            base = (
-                                posixpath.dirname(posixpath.dirname(name))
-                                if name != "_rels/.rels"
-                                else ""
-                            )
-                            target = posixpath.normpath(
-                                posixpath.join(
-                                    base, unquote(r.get("Target", "").split("#", 1)[0])
-                                )
-                            ).lstrip("/")
+                            target = target_part(name, r.get("Target", ""))
                             if target not in name_set:
                                 raise InputError(
                                     "内部の参照先が欠落しています。",
@@ -137,6 +122,7 @@ def validate(path):
                                         "PowerPointの修復で開けるか確認し、修復後のコピーを保存してください。"
                                     ],
                                 )
+            return media_plan
     except (BadZipFile, zlib.error, EOFError) as e:
         raise InputError(
             "PPTXの圧縮データを読み取れません。破損、暗号化・権限保護、旧形式PPTの可能性があります。",
@@ -242,7 +228,7 @@ def text_style(frame):
 
 
 def inspect(path, *, progress=None):
-    validate(path)
+    media_plan = validate(path)
     source_media = None
     page = 0
     part = "ppt/presentation.xml"
@@ -253,9 +239,15 @@ def inspect(path, *, progress=None):
         metadata = BytesIO()
         with ZipFile(path) as source, ZipFile(metadata, "w") as target:
             for info in source.infolist():
+                if info.filename in media_plan.removed:
+                    continue
                 part = info.filename
                 data = (
-                    source.read(info.filename)
+                    (
+                        media_plan.replacements[info.filename]
+                        if info.filename in media_plan.replacements
+                        else source.read(info.filename)
+                    )
                     if info.filename.endswith((".xml", ".rels"))
                     else b""
                 )
@@ -488,6 +480,7 @@ def inspect(path, *, progress=None):
                                     {
                                         "id": f"{key}/cell/{row_i}/{col_i}",
                                         "kind": "cell",
+                                        "geometry_unknown": geometry_unknown,
                                         "name": f"{sh.name} ({row_i + 1},{col_i + 1})",
                                         "box": [x, y, cw, ch],
                                         "rotation": 0,
@@ -537,6 +530,7 @@ def inspect(path, *, progress=None):
             "slides": slides,
             "inherited": inherited,
             "warnings": warnings,
+            "notices": media_plan.notices,
         }
     except InputError:
         raise
@@ -597,7 +591,7 @@ def compare(left, right, threshold=1):
             f"スライドの寸法が一致しません（原本{left['width']:g}×{left['height']:g}pt、英訳版{right['width']:g}×{right['height']:g}pt）。",
             code="SLIDE_SIZE_MISMATCH",
         )
-    pages, groups, issues, rows = [], defaultdict(list), [], []
+    pages, text_pairs = [], []
     for page, (aa, bb) in enumerate(zip(left["slides"], right["slides"]), 1):
         changes = []
         inherited_left = left.get("inherited", [None] * len(left["slides"]))[page - 1]
@@ -633,39 +627,12 @@ def compare(left, right, threshold=1):
             source = a.get("text", "") if a else ""
             target = b.get("text", "") if b else ""
             source_key, target_key = normalize(source), normalize(target)
-            if source_key or target_key:
-                notes = []
-                if uncertain:
-                    notes.append("対応付け要確認")
-                if not source_key:
-                    notes.append("対応する原文なし")
-                row = {
-                    "page": page,
-                    "shape": (a or b)["name"],
-                    "source": source,
-                    "target": target,
-                    "uncertain": uncertain,
-                    "inconsistent": False,
-                    "notes": notes,
-                }
-                rows.append(row)
-                if source_key:
-                    groups[source_key].append(row)
-                    if not target_key:
-                        notes.append("訳抜け候補")
-                        issues.append(dict(row, kind="訳抜け候補"))
-                if target_key and JP.search(target_key):
-                    notes.append("日本語の残存候補")
-                    issues.append(dict(row, kind="日本語の残存候補"))
             fields = []
             if (a and a.get("analysis_incomplete")) or (
                 b and b.get("analysis_incomplete")
             ):
                 uncertain = True
                 fields.append("解析できない項目あり（画像で要確認）")
-                if source_key or target_key:
-                    row["notes"].append("解析が一部不完全・画像で要確認")
-                    row["uncertain"] = True
             delta = None
             layout = formatting = False
             if not a or not b:
@@ -723,19 +690,26 @@ def compare(left, right, threshold=1):
                         "uncertain": uncertain,
                     }
                 )
+            if source_key or target_key:
+                notes = []
+                if uncertain:
+                    notes.append("対応付け要確認")
+                if (a and a.get("analysis_incomplete")) or (
+                    b and b.get("analysis_incomplete")
+                ):
+                    notes.append("解析が一部不完全・画像で要確認")
+                text_pairs.append(
+                    {
+                        "page": page,
+                        "shape": (a or b)["name"],
+                        "source": source,
+                        "target": target,
+                        "uncertain": uncertain,
+                        "notes": notes,
+                    }
+                )
         pages.append({"page": page, "changes": changes})
-    for source, entries in groups.items():
-        if (
-            JP.search(source)
-            and len({normalize(e["target"]) for e in entries if normalize(e["target"])})
-            > 1
-        ):
-            for entry in entries:
-                entry["inconsistent"] = True
-                entry["notes"].append("表記揺らぎの可能性あり")
-            issues.append(
-                {"kind": "表記揺れ候補", "source": source, "entries": entries}
-            )
+    rows, issues = translation_table(text_pairs)
     return {
         "width": left["width"],
         "height": left["height"],
@@ -743,6 +717,11 @@ def compare(left, right, threshold=1):
         "issues": issues,
         "translations": rows,
         "threshold": threshold,
+        "notices": [
+            dict(n, side=side)
+            for side, doc in (("left", left), ("right", right))
+            for n in doc.get("notices", [])
+        ],
         "warnings": [
             dict(w, side=side)
             for side, doc in (("left", left), ("right", right))

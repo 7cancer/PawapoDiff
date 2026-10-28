@@ -110,7 +110,55 @@ def restrict_legacy_directory(path):
     )
 
 
-def run_standard(token, command, directory, environment, label, timeout=120):
+@contextmanager
+def standard_user_desktop(token):
+    """Give the filtered token its own CI desktop, without changing existing ACLs.
+
+    Hosted runners use a service window station that can admit Administrators
+    only. Removing that group otherwise causes user32 initialization to fail
+    before the executable's entry point (STATUS_DLL_INIT_FAILED).
+    """
+    import pywintypes
+    import win32con
+    import win32security
+    import win32service
+
+    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    sid = win32security.ConvertSidToStringSid(user)
+    descriptor = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+        f"D:P(A;;GA;;;{sid})(A;;GA;;;SY)(A;;GA;;;BA)S:(ML;;NW;;;ME)",
+        win32security.SDDL_REVISION_1,
+    )
+    attributes = pywintypes.SECURITY_ATTRIBUTES()
+    attributes.SECURITY_DESCRIPTOR = descriptor
+    name = "PawapoDiffCI-" + secrets.token_hex(8)
+    station = win32service.CreateWindowStation(
+        name, 0, win32con.GENERIC_ALL, attributes
+    )
+    desktop = None
+    try:
+        previous = win32service.GetProcessWindowStation()
+        try:
+            station.SetProcessWindowStation()
+            desktop = win32service.CreateDesktop(
+                "Default", 0, win32con.GENERIC_ALL, attributes
+            )
+        finally:
+            previous.SetProcessWindowStation()
+            # GetProcessWindowStation returns a borrowed handle.
+            previous.Detach()
+        yield name + "\\Default"
+    finally:
+        if desktop is not None:
+            desktop.CloseDesktop()
+            desktop.Detach()
+        station.CloseWindowStation()
+        station.Detach()
+
+
+def run_standard(
+    token, command, directory, environment, label, *, desktop, timeout=120
+):
     import pywintypes
     import win32con
     import win32event
@@ -141,6 +189,7 @@ def run_standard(token, command, directory, environment, label, timeout=120):
     process = thread = None
     try:
         startup = win32process.STARTUPINFO()
+        startup.lpDesktop = desktop
         startup.dwFlags = win32con.STARTF_USESTDHANDLES
         startup.hStdInput, startup.hStdOutput, startup.hStdError = stdin, log, log
         process, thread, _, _ = win32process.CreateProcessAsUser(
@@ -215,7 +264,7 @@ def verify(distribution, manifest):
             TMP=str(temporary),
             PYINSTALLER_RESET_ENVIRONMENT="1",
         )
-        with standard_user_token() as token:
+        with standard_user_token() as token, standard_user_desktop(token) as desktop:
             # Verify the fixture really is inaccessible to the filtered token.
             win32security.ImpersonateLoggedOnUser(token)
             try:
@@ -235,6 +284,7 @@ def verify(distribution, manifest):
                 directory,
                 environment,
                 "standard-first-install",
+                desktop=desktop,
             )
             state = json.loads((base / "install-state.json").read_text())
             installed = Path(state["executable"])
@@ -245,6 +295,7 @@ def verify(distribution, manifest):
                 directory,
                 environment,
                 "standard-repeat-install",
+                desktop=desktop,
             )
             assert json.loads((base / "install-state.json").read_text())[
                 "executable"
@@ -255,6 +306,7 @@ def verify(distribution, manifest):
                 directory,
                 environment,
                 "standard-installed-runtime",
+                desktop=desktop,
             )
             if '"elevated": false' not in proof:
                 raise AssertionError(
@@ -269,6 +321,7 @@ def verify(distribution, manifest):
                 directory,
                 environment,
                 "standard-portable-runtime",
+                desktop=desktop,
             )
             if '"elevated": false' not in proof:
                 raise AssertionError(

@@ -6,6 +6,18 @@ import pytest
 from pawapodiff import windows_runtime
 
 
+def test_redirected_startup_messages_are_utf8_even_on_ansi_windows(monkeypatch):
+    import io
+
+    output = io.BytesIO()
+    stream = io.TextIOWrapper(output, encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", stream)
+    windows_runtime.configure_console()
+    print("アクセスが拒否されました。通常権限で起動してください。")
+    stream.flush()
+    assert "通常権限" in output.getvalue().decode("utf-8")
+
+
 def test_standard_user_guard_does_not_start_an_elevated_app(monkeypatch):
     import pawapodiff.__main__ as application
 

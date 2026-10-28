@@ -8,6 +8,9 @@ from .server import create_app
 
 
 def main():
+    from .windows_runtime import configure_console
+
+    configure_console()
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument(

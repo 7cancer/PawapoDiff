@@ -18,6 +18,7 @@ from pawapodiff.windows_runtime import (
     require_standard_user,
     show_startup_error,
     child_dll_search,
+    configure_console,
 )
 
 
@@ -396,6 +397,7 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_console()
     log_path = configure_log()
     try:
         main()

@@ -289,6 +289,9 @@ if __name__ == "__main__":
     if sys.platform != "win32":
         raise SystemExit("Windows only")
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from pawapodiff.windows_runtime import configure_console
+
+    configure_console()
     try:
         verify(
             Path("dist").resolve(), Path("build/setup-payload/payload.json").resolve()

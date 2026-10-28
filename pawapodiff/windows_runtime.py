@@ -18,6 +18,16 @@ class ElevatedLaunchError(RuntimeError):
     pass
 
 
+def configure_console():
+    # Redirected Windows stdout/stderr may default to cp1252 even though the
+    # UI and diagnostic messages contain Japanese. Keep pipes/logs in UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and not stream.isatty():
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def is_elevated():
     if os.name != "nt":
         return False

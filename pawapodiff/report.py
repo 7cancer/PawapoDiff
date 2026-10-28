@@ -63,13 +63,16 @@ def report(result, images):
         f"<li>{'日本語原本' if notice['side'] == 'left' else '英訳版'} {'p.' + str(notice['page']) if notice['page'] else '共通パーツ'} / 図形ID {esc(notice['shape_id'])}: {esc(notice['message'])}</li>"
         for notice in result.get("notices", [])
     ]
-    notice_html = (
-        "<h2>動画・音声は静止画として比較します</h2><p>動画本体の差分は判定しません。再生・外部参照・参照回復は行わず、元のファイルも変更しません。</p><ul>"
-        + "".join(notices)
-        + "</ul>"
-        if notices
-        else ""
+    image_notices = any(
+        notice.get("code", "").startswith("IMAGE_")
+        for notice in result.get("notices", [])
     )
+    notice_heading = (
+        "<h2>画像・メディアの確認事項</h2><p>取得できる画像・代替枠で比較を続けます。表示された箇所は目視で確認してください。外部ファイルの取得・PowerPointの参照回復は行わず、元のファイルも変更しません。</p><ul>"
+        if image_notices
+        else "<h2>動画・音声は静止画として比較します</h2><p>動画本体の差分は判定しません。再生・外部参照・参照回復は行わず、元のファイルも変更しません。</p><ul>"
+    )
+    notice_html = notice_heading + "".join(notices) + "</ul>" if notices else ""
     rows = []
     for row in result.get("translations", []):
         css = "inconsistent" if row["inconsistent"] else ""

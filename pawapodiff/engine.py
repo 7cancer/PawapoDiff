@@ -111,7 +111,7 @@ def validate(path):
                                     ],
                                 )
                         else:
-                            target = target_part(name, r.get("Target", ""))
+                            target = target_part(name, r.get("Target", ""), name_set)
                             if target not in name_set:
                                 raise InputError(
                                     "内部の参照先が欠落しています。",

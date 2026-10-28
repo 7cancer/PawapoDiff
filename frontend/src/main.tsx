@@ -43,6 +43,7 @@ type Translation = {
 };
 type Result = {
   notices?: {
+    code?: string;
     side: string;
     page: number | null;
     shape_id: string;
@@ -402,13 +403,23 @@ function App() {
           <>
             {!!result?.notices?.length && (
               <section className="media-notice">
-                <h2>動画・音声は静止画として比較します</h2>
+                <h2>
+                  {result.notices.some((notice) =>
+                    notice.code?.startsWith("IMAGE_"),
+                  )
+                    ? "画像・メディアの確認事項"
+                    : "動画・音声は静止画として比較します"}
+                </h2>
                 <p>
-                  動画本体の差分は判定しません。再生・外部参照・参照回復は行わず、元のファイルも変更しません。
+                  {result.notices.some((notice) =>
+                    notice.code?.startsWith("IMAGE_"),
+                  )
+                    ? "取得できる画像・代替枠で比較を続けます。表示された箇所は目視で確認してください。外部ファイルの取得・PowerPointの参照回復は行わず、元のファイルも変更しません。"
+                    : "動画本体の差分は判定しません。再生・外部参照・参照回復は行わず、元のファイルも変更しません。"}
                 </p>
                 <details>
                   <summary>
-                    除外した再生情報（{result.notices.length}項目）
+                    比較時の確認箇所（{result.notices.length}項目）
                   </summary>
                   <ul>
                     {result.notices.map((notice, index) => (

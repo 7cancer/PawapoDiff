@@ -56,11 +56,14 @@ def owner_part(rels):
     )
 
 
-def target_part(rels, target):
+def target_part(rels, target, names=None):
     base = posixpath.dirname(owner_part(rels)) if rels != "_rels/.rels" else ""
-    return posixpath.normpath(
-        posixpath.join(base, unquote(target.split("#", 1)[0]))
-    ).lstrip("/")
+    path = target.split("#", 1)[0]
+    literal = posixpath.normpath(posixpath.join(base, path)).lstrip("/")
+    decoded = posixpath.normpath(posixpath.join(base, unquote(path))).lstrip("/")
+    # OPC producers use both escaped ZIP names and URI-escaped relationship
+    # targets. Check the archive before assuming a decoded name is missing.
+    return literal if names is not None and literal in names else decoded
 
 
 @dataclass
@@ -107,7 +110,7 @@ def plan_media(archive):
         )
         targets = {
             r.get("Id"): target_part(
-                "ppt/_rels/presentation.xml.rels", r.get("Target", "")
+                "ppt/_rels/presentation.xml.rels", r.get("Target", ""), names
             )
             for r in relationships
             if isinstance(r.tag, str) and r.get("TargetMode") != "External"
@@ -162,7 +165,7 @@ def plan_media(archive):
         ids.update(marker_ids)
         for relationship in media:
             if relationship.get("TargetMode") != "External":
-                candidates.add(target_part(rels, relationship.get("Target", "")))
+                candidates.add(target_part(rels, relationship.get("Target", ""), names))
             root.remove(relationship)
         if owner not in names:
             continue  # Normal validation will report a missing mandatory owner.
@@ -229,9 +232,10 @@ def plan_media(archive):
                 if (
                     relationship is None
                     or relationship.get("TargetMode") == "External"
-                    or target_part(rels, relationship.get("Target", "")) not in names
+                    or target_part(rels, relationship.get("Target", ""), names)
+                    not in names
                     or archive.getinfo(
-                        target_part(rels, relationship.get("Target", ""))
+                        target_part(rels, relationship.get("Target", ""), names)
                     ).file_size
                     == 0
                 ):
@@ -276,26 +280,40 @@ def plan_media(archive):
                 and node.getparent() is not None
             ):
                 node.getparent().remove(node)
-        defined = {r.get("Id") for r in root if isinstance(r.tag, str)}
-        for node in document.iter():
+        plan.replacements[owner] = serialize(document)
+        plan.replacements[rels] = serialize(root)
+    # Image fallbacks are handled before the final reference validation, including
+    # GIF alternatives and images in a part that also contains a movie.
+    from .images import sanitize_images
+
+    sanitize_images(archive, plan, pages)
+    for rels, original in roots.items():
+        owner = owner_part(rels)
+        if owner not in plan.replacements:
+            continue
+        relationships = (
+            parse(plan.replacements[rels], rels)
+            if rels in plan.replacements
+            else original
+        )
+        defined = {r.get("Id") for r in relationships if isinstance(r.tag, str)}
+        for node in parse(plan.replacements[owner], owner).iter():
             for key, value in node.attrib.items():
                 if key.startswith(f"{{{R}}}") and value not in defined:
                     raise InputError(
-                        "動画以外の要素で内部参照が欠落しています。",
+                        "内部参照が欠落しています。",
                         code="MISSING_PART",
                         part=owner,
                         technical=f"Undefined relationship: {value}",
                     )
-        plan.replacements[owner] = serialize(document)
-        plan.replacements[rels] = serialize(root)
     # Retain binaries that also have a legitimate remaining non-media reference.
     kept = {
-        target_part(name, r.get("Target", ""))
+        target_part(name, r.get("Target", ""), names)
         for name, root in roots.items()
         for r in root
         if isinstance(r.tag, str) and r.get("TargetMode") != "External"
     }
-    plan.removed = (candidates - kept) & names
+    plan.removed |= (candidates - kept) & names
     if plan.removed and "[Content_Types].xml" in names:
         content = parse(archive.read("[Content_Types].xml"), "[Content_Types].xml")
         for node in list(content):

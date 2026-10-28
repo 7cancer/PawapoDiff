@@ -33,6 +33,19 @@ def standard_user_token():
             original, win32security.DISABLE_MAX_PRIVILEGE, [(admin, 0)], None, None
         )
         win32security.SetTokenInformation(token, win32security.TokenOwner, user)
+        # An elevated service token may grant process/thread access through
+        # Administrators only. Its filtered child must be able to open its own
+        # objects, including during Windows DLL initialization.
+        acl = win32security.ACL()
+        for sid in (
+            user,
+            win32security.CreateWellKnownSid(win32security.WinLocalSystemSid),
+            admin,
+        ):
+            acl.AddAccessAllowedAce(
+                win32security.ACL_REVISION, win32con.GENERIC_ALL, sid
+            )
+        win32security.SetTokenInformation(token, win32security.TokenDefaultDacl, acl)
         medium = win32security.ConvertStringSidToSid("S-1-16-8192")
         win32security.SetTokenInformation(
             token,
@@ -164,6 +177,16 @@ def run_standard(
     import win32event
     import win32file
     import win32process
+    import win32security
+
+    process_attributes = pywintypes.SECURITY_ATTRIBUTES()
+    descriptor = win32security.SECURITY_DESCRIPTOR()
+    descriptor.SetSecurityDescriptorDacl(
+        True,
+        win32security.GetTokenInformation(token, win32security.TokenDefaultDacl),
+        False,
+    )
+    process_attributes.SECURITY_DESCRIPTOR = descriptor
 
     output = directory / (label + ".log")
     attributes = pywintypes.SECURITY_ATTRIBUTES()
@@ -196,8 +219,8 @@ def run_standard(
             token,
             str(command[0]),
             subprocess.list2cmdline([str(value) for value in command]),
-            None,
-            None,
+            process_attributes,
+            process_attributes,
             True,
             win32con.CREATE_NO_WINDOW | win32con.CREATE_UNICODE_ENVIRONMENT,
             environment,
@@ -265,6 +288,19 @@ def verify(distribution, manifest):
             PYINSTALLER_RESET_ENVIRONMENT="1",
         )
         with standard_user_token() as token, standard_user_desktop(token) as desktop:
+            run_standard(
+                token,
+                [
+                    Path(os.environ["SystemRoot"]) / "System32/cmd.exe",
+                    "/d",
+                    "/c",
+                    "echo standard-token-ready",
+                ],
+                directory,
+                environment,
+                "standard-system-preflight",
+                desktop=desktop,
+            )
             # Verify the fixture really is inaccessible to the filtered token.
             win32security.ImpersonateLoggedOnUser(token)
             try:

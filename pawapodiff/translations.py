@@ -39,6 +39,9 @@ def translation_table(text_pairs):
                 normalize(target_lines[index]) if aligned else pair["target"].strip()
             )
             notes = list(pair["notes"])
+            structural_placeholder = pair.get("structural_placeholder", False)
+            if structural_placeholder:
+                notes.append("プレースホルダー削除（訳抜け判定対象外）")
             uncertain = pair["uncertain"] or (not aligned and bool(target_lines))
             if not aligned and target_lines:
                 notes.append("改行数が異なるため行の対応は要確認（英訳はボックス全体）")
@@ -51,15 +54,19 @@ def translation_table(text_pairs):
                 "notes": notes,
             }
             groups[source].append(entry)
-            if not normalize(target):
+            if not structural_placeholder and not normalize(target):
                 notes.append("訳抜け候補")
                 issues.append(dict(entry, source=source, kind="訳抜け候補"))
-            elif JP.search(target):
+            elif not structural_placeholder and JP.search(target):
                 notes.append("日本語の残存候補")
                 issues.append(dict(entry, source=source, kind="日本語の残存候補"))
         # A target-only element can still contain untranslated Japanese, even
         # though it has no source text to display in the Japanese comparison table.
-        if not source_lines and JP.search(pair["target"]):
+        if (
+            not pair.get("structural_placeholder")
+            and not source_lines
+            and JP.search(pair["target"])
+        ):
             issues.append(dict(pair, kind="日本語の残存候補"))
     rows = []
     for source, entries in groups.items():

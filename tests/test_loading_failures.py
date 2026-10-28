@@ -77,7 +77,11 @@ def test_legal_xml_comments_and_system_colors_are_supported(tmp_path):
     color.set("lastClr", "FF0000")
     p.save(source)
     result = engine.compare(original, engine.inspect(source))
-    assert any("文字書式・配置" in c["fields"] for c in result["pages"][0]["changes"])
+    assert any(
+        field.startswith("文字色")
+        for c in result["pages"][0]["changes"]
+        for field in c["fields"]
+    )
 
 
 def test_bad_optional_format_does_not_drop_text_or_other_slides(tmp_path):
@@ -247,7 +251,7 @@ def test_input_error_is_logged_and_summary_is_never_empty(
             assert (
                 "INVALID_PACKAGE" in summary
                 and "日本語原本" in summary
-                and "0.3.1" in summary
+                and "0.4.0" in summary
             )
             assert len(z.read("diagnostic-summary.json")) > 100
 
@@ -403,6 +407,6 @@ def test_unknown_inherited_format_is_not_called_a_confirmed_change(
 
     monkeypatch.setattr(engine, "inherited_signature", unsupported)
     partial = engine.inspect(source)
-    change = engine.compare(normal, partial)["pages"][0]["changes"][0]
-    assert "解析が不完全" in change["fields"][0]
-    assert change["uncertain"]
+    result = engine.compare(normal, partial)
+    assert not result["pages"][0]["changes"]
+    assert result["warnings"]

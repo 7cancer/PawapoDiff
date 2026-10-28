@@ -10,25 +10,13 @@ type Change = {
   uncertain: boolean;
   highlight?: "format" | "layout" | "mixed" | "other";
 };
-type Entry = {
-  page: number;
-  target: string;
-  shape?: string;
-  uncertain?: boolean;
-};
-type Issue = {
-  kind: string;
-  source: string;
-  target?: string;
-  page?: number;
-  entries?: Entry[];
-};
 type Occurrence = {
   page: number;
   shape: string;
   source_line: number;
   target: string;
   uncertain: boolean;
+  notes?: string[];
 };
 type Translation = {
   pages: number[];
@@ -59,7 +47,6 @@ type Result = {
   width: number;
   height: number;
   pages: { page: number; changes: Change[] }[];
-  issues: Issue[];
 };
 type Status = {
   diagnostic?: {
@@ -260,7 +247,6 @@ function App() {
         {marks &&
           result &&
           changes.map((c, index) => {
-            if (c.kind !== "structure" && activeChange !== index) return null;
             return (s === "diff" ? ["left", "right"] : [s]).map((side) => {
               const item = side === "left" ? c.left : c.right;
               if (!item) return null;
@@ -440,7 +426,7 @@ function App() {
                   項目）
                 </h2>
                 <p>
-                  比較・翻訳チェックには不完全な箇所があります。該当ページを画像で確認してください。
+                  比較結果・日英比較表には不完全な箇所があります。該当ページを画像で確認してください。
                 </p>
                 <details>
                   <summary>対象ページと要素を表示</summary>
@@ -606,28 +592,23 @@ function App() {
                           >
                             <span className="change-number">{i + 1}</span>
                             <span
-                              className={
-                                "badge " +
-                                (c.kind === "text"
-                                  ? "text"
-                                  : c.highlight || "other")
-                              }
+                              className={"badge " + (c.highlight || "other")}
                             >
-                              {c.kind === "text"
-                                ? "文字内容"
-                                : c.highlight === "format"
-                                  ? "書式のみ"
-                                  : c.highlight === "layout"
-                                    ? "配置"
-                                    : c.highlight === "mixed"
-                                      ? "書式と配置"
-                                      : "その他・要確認"}
+                              {c.highlight === "format"
+                                ? "書式のみ"
+                                : c.highlight === "layout"
+                                  ? "配置"
+                                  : c.highlight === "mixed"
+                                    ? "書式と配置"
+                                    : "追加・削除・その他"}
                             </span>
                             <strong>{(c.left || c.right)?.name}</strong>
-                            <p>
-                              {c.fields.join(" / ")}{" "}
-                              {c.uncertain && "【対応要確認】"}
-                            </p>
+                            <div className="change-fields">
+                              {c.fields.map((field, index) => (
+                                <div key={index}>{field}</div>
+                              ))}
+                            </div>
+                            {c.uncertain && <p>【対応要確認】</p>}
                           </article>
                         ))
                       )}
@@ -640,7 +621,7 @@ function App() {
               <section className="panel">
                 <div className="toolbar">
                   <h2>
-                    翻訳チェック <small>{result.issues.length} 件の候補</small>
+                    日英比較表 <small>{result.translations.length} 件</small>
                   </h2>
                   <button
                     disabled={busy}
@@ -659,26 +640,6 @@ function App() {
                 <p>
                   意味の正確さは判定しません。固有名詞や文脈による訳し分けも、人が確認してください。
                 </p>
-                {result.issues.map((issue, i) => (
-                  <article key={i}>
-                    <span className="badge">{issue.kind}</span>
-                    <strong>{issue.source}</strong>
-                    {(
-                      issue.entries || [
-                        { page: issue.page!, target: issue.target! },
-                      ]
-                    ).map((e, j) => (
-                      <p key={j}>
-                        p.{e.page} → {e.target || "（空）"}{" "}
-                        {e.uncertain && "【対応要確認】"}
-                      </p>
-                    ))}
-                  </article>
-                ))}
-                {!result.issues.length && <p>候補はありません。</p>}
-                <h3>
-                  日英比較表 <small>{result.translations.length} 件</small>
-                </h3>
                 <p>
                   改行ごとに分割し、原文側が2文字以下の行は省略します。同じ原文を全ページから1行にまとめ、英訳ごとに出現ページを表示します。改行数が異なる場合は対応を要確認とします。
                 </p>
@@ -717,6 +678,9 @@ function App() {
                                   p.{entry.page} ／ {entry.shape} ／{" "}
                                   {entry.source_line}行目
                                   {entry.uncertain ? "（要確認）" : ""}
+                                  {entry.notes?.length
+                                    ? ` ／ ${entry.notes.join(" / ")}`
+                                    : ""}
                                 </small>
                               ))}
                             </details>

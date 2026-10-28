@@ -31,7 +31,7 @@ def test_translation_does_not_become_formatting(tmp_path):
     fixture(a)
     fixture(b, True)
     r = compare(inspect(a), inspect(b))
-    assert all(c["kind"] == "text" for page in r["pages"] for c in page["changes"])
+    assert all(not page["changes"] for page in r["pages"])
     assert [i["kind"] for i in r["issues"]] == ["表記揺れ候補"]
     assert {e["page"] for e in r["issues"][0]["entries"]} == {1, 2}
 
@@ -60,7 +60,9 @@ def test_geometry_partial_bold_font_color_rotation_image(tmp_path):
     r = compare(inspect(a), inspect(b))
     fields = [f for c in r["pages"][0]["changes"] for f in c["fields"]]
     assert "横位置: +2.00 pt" in fields and "幅: +3.00 pt" in fields
-    assert "回転" in fields and "文字書式・配置" in fields and "画像" in fields
+    assert "回転" in fields and "画像" in fields
+    assert any(field.startswith("太字（ボールド）") for field in fields)
+    assert any(field.startswith("フォント名") for field in fields)
     r = compare(inspect(a), inspect(b), 4)
     assert not any("横位置" in f for c in r["pages"][0]["changes"] for f in c["fields"])
 
@@ -154,14 +156,18 @@ def test_inherited_format_and_paragraph_defaults(tmp_path):
     p.slides[0].shapes[0].text_frame.paragraphs[0].font.bold = True
     p.save(b)
     r = compare(inspect(a), inspect(b))
-    assert any("文字書式・配置" in c["fields"] for c in r["pages"][0]["changes"])
+    assert any(
+        field.startswith("太字（ボールド）")
+        for c in r["pages"][0]["changes"]
+        for field in c["fields"]
+    )
     p = Presentation(a)
     from pptx.oxml.xmlchemy import OxmlElement
 
     p.slide_master._element.append(OxmlElement("p:clrMap"))
     p.save(b)
     r = compare(inspect(a), inspect(b))
-    assert r["pages"][0]["changes"][0]["left"]["id"] == "inherited"
+    assert all(not page["changes"] for page in r["pages"])
 
 
 def test_fallback_matching_and_unmatched_elements(tmp_path):

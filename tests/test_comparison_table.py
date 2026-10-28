@@ -111,11 +111,8 @@ def test_html_report_contains_same_table_annotations_and_colored_markers(tmp_pat
     Image.new("RGB", (100, 100)).save(image)
     content = report(compare(left, right), {"left": [image], "right": [image]})
     assert "box format" in content and "box layout" in content
-    assert (
-        content.index("翻訳漏れ・表記揺れチェック")
-        < content.index("日英比較表")
-        < content.index("ページ 1")
-    )
+    assert "翻訳漏れ・表記揺れチェック" not in content
+    assert content.index("日英比較表") < content.index("ページ 1")
     assert content.count("表記揺らぎの可能性あり") == 1
     for color, label in PALETTE.values():
         assert color in content and label in content

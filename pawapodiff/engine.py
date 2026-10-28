@@ -12,6 +12,7 @@ from .limits import MAX_EXPANDED_BYTES, MAX_XML_PART_BYTES, MAX_XML_TOTAL_BYTES
 from .errors import InputError
 from .media import plan_media, target_part
 from .translations import normalize, translation_table
+from .formatting import format_xml, text_style, style_changes
 
 EMU = 12700
 
@@ -142,37 +143,6 @@ def validate(path):
         ) from e
 
 
-def color_value(color):
-    if color.type is None:
-        return None
-    # Include system/preset/HSL/scRGB colors and tint/alpha transforms. Using
-    # theme_color alone collapses all non-theme colors to NOT_THEME_COLOR.
-    return format_xml(color._xFill)
-
-
-def format_xml(element):
-    """Keep formatting and geometry, ignoring text content and proofing metadata."""
-    if element is None:
-        return ""
-    copy = etree.fromstring(etree.tostring(element))
-    for node in copy.iter():
-        if not isinstance(node.tag, str):
-            continue  # XML comments and processing instructions are legal.
-        if etree.QName(node).localname in ("t", "fld"):
-            node.text = ""
-        for attr in list(node.attrib):
-            if etree.QName(attr).localname in (
-                "lang",
-                "altLang",
-                "dirty",
-                "err",
-                "smtClean",
-                "smtId",
-            ):
-                del node.attrib[attr]
-    return etree.tostring(copy).decode()
-
-
 def inherited_signature(slide):
     parts = [
         format_xml(slide.slide_layout._element),
@@ -182,49 +152,6 @@ def inherited_signature(slide):
         if not rel.is_external and rel.reltype.endswith("/theme"):
             parts.append(sha256(rel.target_part.blob).hexdigest())
     return sha256("".join(parts).encode()).hexdigest()
-
-
-def text_style(frame):
-    paragraphs = []
-    for p in frame.paragraphs:
-        runs = []
-        for r in p.runs:
-            if not r.text.strip():
-                continue
-            f = r.font
-            style = (
-                f.name,
-                f.size.pt if f.size else None,
-                f.bold,
-                f.italic,
-                color_value(f.color),
-            )
-            # Compare transitions, not translated run lengths or word counts.
-            if not runs or runs[-1] != style:
-                runs.append(style)
-        paragraphs.append(
-            {
-                "alignment": str(p.alignment),
-                "level": p.level,
-                "runs": runs,
-                "defaults": format_xml(p._p.pPr),
-            }
-        )
-    # Paragraph count may naturally change on translation; preserve distinct style patterns.
-    distinct = []
-    for p in paragraphs:
-        if p not in distinct:
-            distinct.append(p)
-    return {
-        "patterns": distinct,
-        "anchor": str(frame.vertical_anchor),
-        "margins": [
-            getattr(frame, "margin_" + side) / EMU
-            for side in ("left", "top", "right", "bottom")
-        ],
-        "wrap": frame.word_wrap,
-        "body": format_xml(frame._txBody.bodyPr),
-    }
 
 
 def inspect(path, *, progress=None):
@@ -364,6 +291,16 @@ def inspect(path, *, progress=None):
             sx, sy, ox, oy = transform
             for sh in shapes:
                 key = f"{prefix}{sh.shape_id}"
+                placeholder = None
+                if sh.is_placeholder:
+                    placeholder = optional(
+                        key,
+                        "プレースホルダー情報",
+                        lambda: {
+                            "idx": sh.placeholder_format.idx,
+                            "type": str(sh.placeholder_format.type),
+                        },
+                    )
                 dimensions = [sh.left, sh.top, sh.width, sh.height]
                 geometry_unknown = any(value is None for value in dimensions)
                 if geometry_unknown:
@@ -426,6 +363,8 @@ def inspect(path, *, progress=None):
                 item = {
                     "id": key,
                     "kind": str(sh.shape_type),
+                    "is_placeholder": sh.is_placeholder,
+                    "placeholder": placeholder,
                     "geometry_unknown": geometry_unknown,
                     "name": sh.name,
                     "box": box,
@@ -557,17 +496,47 @@ def inspect(path, *, progress=None):
             source_media.close()
 
 
+def placeholder_key(shape):
+    metadata = shape.get("placeholder")
+    if not shape.get("is_placeholder") or not metadata or metadata.get("idx") is None:
+        return None
+    parent = shape["id"].rsplit("/", 1)[0] if "/" in shape["id"] else ""
+    return parent, metadata["idx"], metadata.get("type")
+
+
 def pair_shapes(left, right):
-    available = {b["id"]: b for b in right}
+    available = {shape["id"]: shape for shape in right}
     pairs, remaining = [], []
     for a in left:
         b = available.get(a["id"])
-        if b and a["kind"] == b["kind"]:
-            pairs.append((a, available.pop(a["id"]), False))
+        compatible = b and bool(a.get("is_placeholder")) == bool(
+            b.get("is_placeholder")
+        )
+        if compatible and a.get("is_placeholder"):
+            compatible = placeholder_key(a) == placeholder_key(b)
+        elif compatible:
+            compatible = a["kind"] == b["kind"]
+        if compatible:
+            pairs.append((a, available.pop(b["id"]), False))
         else:
             remaining.append(a)
     for a in remaining:
-        candidates = [b for b in available.values() if b["kind"] == a["kind"]]
+        if a.get("is_placeholder"):
+            key = placeholder_key(a)
+            candidates = [
+                b
+                for b in available.values()
+                if key is not None and placeholder_key(b) == key
+            ]
+            if not candidates:
+                pairs.append((a, None, key is None))
+                continue
+        else:
+            candidates = [
+                b
+                for b in available.values()
+                if not b.get("is_placeholder") and b["kind"] == a["kind"]
+            ]
         b = min(
             candidates,
             key=lambda b: sum(abs(x - y) for x, y in zip(a["box"], b["box"])),
@@ -575,8 +544,8 @@ def pair_shapes(left, right):
         )
         if b:
             available.pop(b["id"])
-        pairs.append((a, b, True))
-    pairs.extend((None, b, True) for b in available.values())
+        pairs.append((a, b, not a.get("is_placeholder") or len(candidates) > 1))
+    pairs.extend((None, b, not bool(placeholder_key(b))) for b in available.values())
     return pairs
 
 
@@ -594,35 +563,6 @@ def compare(left, right, threshold=1):
     pages, text_pairs = [], []
     for page, (aa, bb) in enumerate(zip(left["slides"], right["slides"]), 1):
         changes = []
-        inherited_left = left.get("inherited", [None] * len(left["slides"]))[page - 1]
-        inherited_right = right.get("inherited", [None] * len(right["slides"]))[
-            page - 1
-        ]
-        inherited_unknown = any(
-            warning["page"] == page and warning["shape_id"] == "inherited"
-            for doc in (left, right)
-            for warning in doc.get("warnings", [])
-        )
-        if inherited_left != inherited_right or inherited_unknown:
-            marker = {
-                "id": "inherited",
-                "name": "テーマ・マスター・レイアウト",
-                "box": [0, 0, left["width"], left["height"]],
-            }
-            changes.append(
-                {
-                    "kind": "structure",
-                    "highlight": "other",
-                    "fields": [
-                        "継承された書式・レイアウトの解析が不完全（画像で要確認）"
-                        if inherited_unknown
-                        else "継承された書式・レイアウトの変更（要確認）"
-                    ],
-                    "left": marker,
-                    "right": marker,
-                    "uncertain": True,
-                }
-            )
         for a, b, uncertain in pair_shapes(aa, bb):
             source = a.get("text", "") if a else ""
             target = b.get("text", "") if b else ""
@@ -636,7 +576,9 @@ def compare(left, right, threshold=1):
             delta = None
             layout = formatting = False
             if not a or not b:
-                fields.append("要素の追加" if b else "要素の削除")
+                placeholder_change = (a or b).get("is_placeholder", False)
+                label = "プレースホルダー" if placeholder_change else "要素の"
+                fields.append(label + ("追加" if b else "削除"))
             else:
                 delta = [round(y - x, 4) for x, y in zip(a["box"], b["box"])]
                 for i, label in enumerate(
@@ -654,21 +596,16 @@ def compare(left, right, threshold=1):
                     item.get("analysis_incomplete") and item["style"] is None
                     for item in (a, b)
                 )
-                if not style_unknown and a["style"] != b["style"]:
-                    fields.append("文字書式・配置")
-                    formatting = True
+                if not style_unknown:
+                    changed_style = style_changes(
+                        a["style"],
+                        b["style"],
+                        compare_runs=bool(source_key and target_key),
+                    )
+                    fields.extend(changed_style)
+                    formatting = bool(changed_style)
                 if a["image"] != b["image"]:
                     fields.append("画像")
-                if source_key != target_key:
-                    changes.append(
-                        {
-                            "kind": "text",
-                            "fields": ["文字内容（翻訳を含む）"],
-                            "left": a,
-                            "right": b,
-                            "uncertain": uncertain,
-                        }
-                    )
             if fields or uncertain:
                 highlight = (
                     "mixed"
@@ -706,6 +643,9 @@ def compare(left, right, threshold=1):
                         "target": target,
                         "uncertain": uncertain,
                         "notes": notes,
+                        "structural_placeholder": bool(
+                            (not a or not b) and (a or b).get("is_placeholder")
+                        ),
                     }
                 )
         pages.append({"page": page, "changes": changes})

@@ -463,6 +463,12 @@ footer {
   font-weight: bold;
   color: #126e77;
 }
+.change-fields {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  line-height: 1.7;
+}
 .interaction-help {
   color: #6b7789;
   font-size: 12px;

@@ -39,6 +39,20 @@ def run_worker(request_path):
             return 0
         if request.get("mode") != "render":
             raise ValueError("Unknown Office worker mode")
+        from .windows_runtime import require_standard_user, ElevatedLaunchError
+        from .render import RenderError
+
+        try:
+            require_standard_user()
+        except ElevatedLaunchError as error:
+            raise RenderError(
+                str(error),
+                code="ELEVATED_PROCESS",
+                stage="PowerPoint連携の実行権限の確認",
+                actions=[
+                    "PawapoDiffとPowerPointを通常権限で起動してください。管理者として実行する互換性設定も確認してください。"
+                ],
+            ) from error
         validate(request["source"])
         images = _render_powerpoint(
             request["source"],

@@ -40,5 +40,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$env:RELEASE_TAG" ./dist/PawapoDiff-Setup.exe ./dist/PawapoDiff-Setup.exe.sha256 --verify-tag --title "PawapoDiff $env:RELEASE_TAG - Preview" --notes-file RELEASE_NOTES.md --prerelease
+          gh release create "$env:RELEASE_TAG" ./dist/PawapoDiff-Setup.exe ./dist/PawapoDiff-Setup.exe.sha256 ./dist/PawapoDiff-Portable.zip ./dist/PawapoDiff-Portable.zip.sha256 --verify-tag --title "PawapoDiff $env:RELEASE_TAG - Preview" --notes-file RELEASE_NOTES.md --prerelease
           if ($LASTEXITCODE) { throw 'Release publication failed' }

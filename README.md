@@ -6,13 +6,23 @@
 
 - Windows 10/11、デスクトップ版Microsoft PowerPoint、Chrome/Edge等。
 - **`PawapoDiff-Setup.exe` をダブルクリックするだけで、必要なPython実行環境・依存ライブラリ・画面を自動配置して起動します。** 利用者によるPython・Node.jsの導入や管理者権限は不要です。
-- 初回は `%LOCALAPPDATA%\PawapoDiff\versions` に展開し、スタートメニューに「PawapoDiff」を追加します。次回からはそのショートカットで起動できます。セットアップEXEを再実行しても、同じ版は再導入しません。新版は別フォルダーに導入します。
+- 初回は `%LOCALAPPDATA%\PawapoDiff\versions` に展開し、スタートメニューに「PawapoDiff」を追加します。次回からはそのショートカットで起動できます。セットアップEXEを再実行しても、読み取り可能な同じ版は再利用します。新版は別フォルダーに導入します。
 - 必要な環境はEXEに同梱するため、導入・使用時ともインターネット接続は不要です。**PowerPoint本体の導入・ライセンス認証は別途必要です。**
 - 不要になった場合はアプリを終了後、上記のPawapoDiffフォルダーとスタートメニューのショートカットを削除してください。自動更新は行いません。
 - 終了は起動したコンソールで **Ctrl+C**。ブラウザを閉じるだけではサーバーは終了しません。通常終了時に一時ファイルを削除します。強制終了時はOSの一時フォルダーに `PawapoDiff-*` が残る場合があります。
 - **[GitHub Releases](https://github.com/7cancer/PawapoDiff/releases) から公開版の `PawapoDiff-Setup.exe` をダウンロードできます。** リリースページ下部のAssetsにあるEXEを選んでください。`Source code` のZIPにはEXEは含まれません。
 - 開発ビルドは [Actions → Windows installer](https://github.com/7cancer/PawapoDiff/actions/workflows/windows-build.yml) の成功した実行のArtifactsからも取得できます。こちらはZIPの展開とGitHubへのログインが必要です。
 - ソースのZIPにはビルド済みEXEは含みません。手元で生成する場合は下記のWindowsビルド手順を使います。
+
+## 起動時にアクセスが拒否される場合
+
+**PawapoDiffとPowerPointは、どちらも通常権限で起動してください。** 管理者として起動すると、通常権限のOfficeとの自動操作が失敗する場合があります。アプリとセットアップは管理者実行を検出した場合、比較を始めず通常権限での起動を案内します。EXE・ショートカットの互換性設定にある「管理者としてこのプログラムを実行する」も確認してください。
+
+v0.4.1では導入フォルダーがユーザープロファイルのアクセス権を継承するよう修正しています。以前の管理者実行で読み取れない導入先が残っている場合、新しいセットアップを通常権限で実行すると、そのフォルダーを変更・削除せず別のユーザー用フォルダーに導入します。古いショートカットも新規作成したものに置き換えます。
+
+セットアップのエラーには処理段階・対象パス・例外・起動ログの保存先を表示します。通常は `%LOCALAPPDATA%\PawapoDiff\setup-logs\PawapoDiff-Setup-<プロセスID>.log` に保存し、書き込めない場合はOSの一時フォルダーを使います。ログにはローカルのパスが含まれます。共有前に確認してください。
+
+セットアップEXE自体がWindowsの一時展開時点で起動できない場合は、同じリリースの **`PawapoDiff-Portable.zip` をすべて展開**し、展開先の `PawapoDiff.exe` を通常権限で起動できます。`_internal` を含む全ファイルが必要です。ZIP内から直接起動しないでください。会社の実行制限によって本体EXEが拒否される場合は、表示されたパスとログを会社の管理者に確認してください。セキュリティ機能や組織の制限を自動解除しません。
 
 ## 使い方
 
@@ -61,7 +71,7 @@
 | `EXTERNAL_REFERENCE` / `ACTIVE_CONTENT` | 動画・音声以外のリンクされたExcel・画像、マクロ・ActiveX等。リンク解除・埋め込み等を行ったコピーが必要です。外部参照やマクロは自動実行しません。 |
 | `XML_SIZE_LIMIT` / `EXPANDED_SIZE_LIMIT` | 構造情報または展開後サイズが上限超過。複雑な資料は分割してください。 |
 | `DISK_FULL` / `MEMORY_EXHAUSTED` / `ACCESS_DENIED` | 空き容量・メモリ・作業フォルダーの権限の問題。OSの一時ドライブや会社のセキュリティ制限も確認してください。 |
-| `POWERPOINT_NOT_INSTALLED` / `POWERPOINT_START_FAILED` | デスクトップ版PowerPointの導入・初回設定・認証・自動操作制限を確認してください。 |
+| `POWERPOINT_NOT_INSTALLED` / `POWERPOINT_START_FAILED` | アプリ・PowerPointの通常権限での起動、デスクトップ版PowerPointの導入・初回設定・認証・自動操作制限を確認してください。 |
 | `POWERPOINT_OPEN_FAILED` / `OFFICE_ACCESS_DENIED` | 構造は読めてもPowerPointが開けない状態。保護ビュー・パスワード・権限保護・ライセンス認証・修復要求等を手動で確認してください。保護は自動解除しません。 |
 | `POWERPOINT_BUSY` / `POWERPOINT_TIMEOUT` / `POWERPOINT_DISCONNECTED` | ダイアログ、長時間応答停止、Officeの異常終了等。開いている資料を保存してからPowerPointを再起動し、必要なら資料を分割してください。 |
 | `ANALYSIS_FAILED` / `UNEXPECTED_ERROR` | まだ対応できていない構造や例外。エラーが出た同じ画面で診断ログを保存してください。 |
@@ -95,11 +105,11 @@ powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1
 
 配布するファイルは **`dist/PawapoDiff-Setup.exe`** です。アプリ本体・Python・依存ライブラリ・ビルド済みUIを内包した、オフラインのユーザー単位インストーラーです。ペイロードのSHA-256検証後、一時フォルダーに展開してから導入先に移動します。中断した展開物を完成版として起動しません。管理者権限やシステム全体のPATH変更は不要です。
 
-生成にはPython・Node.jsが必要ですが、利用者には不要です。従来のポータブル版 `dist/PawapoDiff` も生成します。こちらを配布する場合はフォルダー全体が必要です。PowerPoint自体は同梱しません。インストーラーは未署名のため、Windowsが発行元を確認できないと表示する場合があります。CIで同梱するSHA-256ファイルでダウンロード後の整合性も確認できます。
+生成にはPython・Node.jsが必要ですが、利用者には不要です。ポータブル版 `dist/PawapoDiff` と、その内容をまとめた `dist/PawapoDiff-Portable.zip` も生成します。こちらを配布する場合はフォルダー全体が必要です。PowerPoint自体は同梱しません。インストーラーは未署名のため、Windowsが発行元を確認できないと表示する場合があります。CIで同梱するSHA-256ファイルでダウンロード後の整合性も確認できます。
 
 ### 検証状況とWindowsで残る確認
 
-Linux上で解析・API・比較画像・子プロセスの異常終了／応答停止のpytest、型チェック、画面ビルドを検証しています。200ページ×2資料の構造比較・API全体（画像部分は代替レンダラー）、特殊な文字色・XMLコメント・座標欠落・グループの変換欠落・内部参照破損・空にならない診断ZIPも検証します。埋め込み動画・外部動画・動画本体欠落・サムネイル欠落・孤立した再生情報、GIF本体・補助画像の欠落、URI表記の違いについて、継続・静止化・原本保全を検証します。200ページ資料の負荷試験と実PowerPointでの動画付き資料の描画確認は未実施です。Windows CIではOfficeを模した実際のIDispatchオブジェクト（HWNDメンバーを持たない）に対し、読み込み・比較用描画・設定復元・後処理のCOM契約を検証します。PowerPoint本体のテストとは区別します。ブラウザ操作は合成画像を返すテスト用レンダラーで検証しています。Windows CIでは配布EXEの導入・子プロセス起動を検証します。PowerPoint本体による描画はCIでは自動実行せず、以下のスモークテストで確認できます。
+Linux上で解析・API・比較画像・子プロセスの異常終了／応答停止のpytest、型チェック、画面ビルドを検証しています。200ページ×2資料の構造比較・API全体（画像部分は代替レンダラー）、特殊な文字色・XMLコメント・座標欠落・グループの変換欠落・内部参照破損・空にならない診断ZIPも検証します。埋め込み動画・外部動画・動画本体欠落・サムネイル欠落・孤立した再生情報、GIF本体・補助画像の欠落、URI表記の違いについて、継続・静止化・原本保全を検証します。200ページ資料の負荷試験と実PowerPointでの動画付き資料の描画確認は未実施です。Windows CIではOfficeを模した実際のIDispatchオブジェクト（HWNDメンバーを持たない）に対し、読み込み・比較用描画・設定復元・後処理のCOM契約を検証します。PowerPoint本体のテストとは区別します。ブラウザ操作は合成画像を返すテスト用レンダラーで検証しています。Windows CIでは配布EXEの導入・子プロセス起動を検証します。管理者グループを無効化したMedium Integrityトークンでの初回・再導入、読めない旧導入先からの復旧、ショートカットの管理者実行フラグ除去、インストール版・ポータブル版のランタイムと描画ワーカー起動も検証します。PowerPoint本体による描画はCIでは自動実行せず、以下のスモークテストで確認できます。
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/windows-smoke.py
@@ -117,4 +127,4 @@ MIT License。
 
 ### リリースの公開
 
-`v*` タグのPushでWindowsビルド・テスト・導入検証が実行されます。すべて成功した場合に、EXEとSHA-256を添付したGitHubのプレリリースを公開します。公開前に `RELEASE_NOTES.md` を更新してください。PowerPoint本体の自動実機テストはCI対象外のため、Previewとして扱います。
+`v*` タグのPushでWindowsビルド・テスト・導入検証が実行されます。すべて成功した場合に、セットアップEXE・ポータブルZIPと各SHA-256を添付したGitHubのプレリリースを公開します。公開前に `RELEASE_NOTES.md` を更新してください。PowerPoint本体の自動実機テストはCI対象外のため、Previewとして扱います。

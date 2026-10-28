@@ -23,6 +23,7 @@ if ($LASTEXITCODE) { throw 'packaging failed' }
 Write-Host 'dist\PawapoDiff\PawapoDiff.exe を起動してください。配布時はPawapoDiffフォルダー全体をコピーします。'
 & .\.venv\Scripts\python.exe scripts/create_payload.py dist/PawapoDiff build/setup-payload
 if ($LASTEXITCODE) { throw 'payload creation failed' }
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoDiff-Setup --onefile --add-data 'build/setup-payload/payload.zip;.' --add-data 'build/setup-payload/payload.json;.' scripts/setup_launcher.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoDiff-Setup --onefile --paths . --add-data 'build/setup-payload/payload.zip;.' --add-data 'build/setup-payload/payload.json;.' scripts/setup_launcher.py
 if ($LASTEXITCODE) { throw 'installer packaging failed' }
+Copy-Item build/setup-payload/payload.zip dist/PawapoDiff-Portable.zip -Force
 Write-Host 'dist\PawapoDiff-Setup.exe を配布してください。クリックすると環境を展開して起動します。'

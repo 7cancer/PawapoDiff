@@ -58,7 +58,33 @@ def main():
         print(
             "PASS: Windows runtime, assets and isolated worker startup are available."
         )
+        from .windows_runtime import is_elevated
+        from . import __version__
+
+        print(
+            json.dumps(
+                {
+                    "version": __version__,
+                    "elevated": is_elevated(),
+                    "runtime_check": "passed",
+                }
+            )
+        )
         return
+    from .windows_runtime import (
+        require_standard_user,
+        ElevatedLaunchError,
+        show_startup_error,
+    )
+
+    try:
+        require_standard_user()
+    except ElevatedLaunchError as error:
+        import logging
+
+        logging.getLogger(__name__).error("Elevated interactive launch rejected")
+        show_startup_error(str(error))
+        return 1
     token = secrets.token_urlsafe(32)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))

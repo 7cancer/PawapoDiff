@@ -110,6 +110,7 @@ def office_diagnostic(error, stage):
             "PowerPointの自動操作用インスタンスを起動できませんでした。",
         )
         actions = [
+            "PawapoDiffとPowerPointを通常権限で起動してください。管理者として実行する互換性設定が有効でないかも確認してください。",
             "PowerPointを手動で起動して初回設定・サインイン・ライセンス認証を済ませてください。",
             "解決しない場合は会社の管理者にOfficeの自動操作制限を確認してください。",
         ]

@@ -62,8 +62,11 @@ def test_missing_executable_and_incomplete_install_are_reported(tmp_path):
     assert not list((tmp_path / "local/versions").iterdir())
     payload, digest = archive(tmp_path, {"PawapoDiff.exe": "app"})
     (tmp_path / "local/versions" / digest).mkdir()
-    with pytest.raises(SetupError, match="incomplete"):
-        install(payload, digest, tmp_path / "local")
+    recovered = install(payload, digest, tmp_path / "local")
+    assert recovered.parent.name == digest + "-user"
+    assert recovered.read_text() == "app"
+    assert (tmp_path / "local/versions" / digest).is_dir()
+    assert not list((tmp_path / "local/versions" / digest).iterdir())
 
 
 def test_windows_filename_normalization_cannot_hide_backslashes(tmp_path, monkeypatch):
@@ -82,3 +85,86 @@ def test_windows_filename_normalization_cannot_hide_backslashes(tmp_path, monkey
     with pytest.raises(SetupError, match="Unsafe"):
         install(payload, digest, tmp_path / "local")
     assert not list((tmp_path / "local/versions").iterdir())
+
+
+def test_unreadable_cached_installation_is_preserved_and_reinstalled(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    payload, digest = archive(tmp_path, {"PawapoDiff.exe": "app"})
+    first = install(payload, digest, tmp_path / "local")
+    read = Path.read_text
+
+    def denied(path, *args, **kwargs):
+        if path == first.parent / ".complete":
+            raise PermissionError(13, "Access denied", str(path))
+        return read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    second = install(payload, digest, tmp_path / "local")
+    assert second != first and second.parent.name == digest + "-user"
+    assert first.read_text() == second.read_text() == "app"
+    assert install(payload, digest, tmp_path / "local") == second
+
+
+def test_staging_inherits_permissions_instead_of_private_mkdtemp(tmp_path, monkeypatch):
+    import scripts.setup_launcher as setup
+    from pathlib import Path
+
+    payload, digest = archive(tmp_path, {"PawapoDiff.exe": "app"})
+    make = Path.mkdir
+    modes = []
+
+    def mkdir(path, mode=0o777, **kwargs):
+        if path.name.startswith(".install-"):
+            modes.append(mode)
+        return make(path, mode=mode, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(
+        setup.tempfile,
+        "mkdtemp",
+        lambda *args, **kwargs: pytest.fail(
+            "Protected OWNER RIGHTS staging is not suitable for installation"
+        ),
+    )
+    assert install(payload, digest, tmp_path / "local").is_file()
+    assert modes == [0o777]
+
+
+def test_launch_access_denial_retries_only_the_same_executable(tmp_path):
+    from scripts.setup_launcher import launch_application
+
+    attempts, delays = [], []
+    executable = tmp_path / "PawapoDiff.exe"
+
+    def denied(command, **kwargs):
+        attempts.append(command)
+        raise PermissionError(13, "Access denied")
+
+    with pytest.raises(PermissionError):
+        launch_application(executable, popen=denied, sleep=delays.append)
+    assert attempts == [[str(executable)]] * 4
+    assert delays == [0.5, 1, 1.5]
+
+
+def test_child_environment_keeps_non_elevating_compatibility_options(monkeypatch):
+    from scripts.setup_launcher import application_environment
+
+    monkeypatch.setenv("__COMPAT_LAYER", "WIN8RTM RunAsAdmin RunAsHighest")
+    environment = application_environment()
+    assert environment["__COMPAT_LAYER"] == "WIN8RTM"
+    assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert "RunAsAdmin" in __import__("os").environ["__COMPAT_LAYER"]
+
+
+def test_access_failure_message_has_stage_path_and_log(tmp_path):
+    import scripts.setup_launcher as setup
+
+    setup.phase("本体EXEの実行", tmp_path / "PawapoDiff.exe")
+    text = setup.failure_message(
+        PermissionError(13, "Access denied"), tmp_path / "setup.log"
+    )
+    assert "本体EXEの実行" in text and "PawapoDiff.exe" in text
+    assert "setup.log" in text and "通常権限" in text

@@ -35,5 +35,7 @@ jobs:
           path: |
             dist/PawapoDiff-Setup.exe
             dist/PawapoDiff-Setup.exe.sha256
+            dist/PawapoDiff-Portable.zip
+            dist/PawapoDiff-Portable.zip.sha256
           if-no-files-found: error
           retention-days: 30

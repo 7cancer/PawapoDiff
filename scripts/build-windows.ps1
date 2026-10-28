@@ -10,6 +10,10 @@ try {
     if ($LASTEXITCODE) { throw 'npm ci failed' }
     npm run build
     if ($LASTEXITCODE) { throw 'frontend build failed' }
+    npx --no-install playwright install chromium
+    if ($LASTEXITCODE) { throw 'browser test setup failed' }
+    npm run test:browser
+    if ($LASTEXITCODE) { throw 'fresh browser startup verification failed' }
 } finally { Pop-Location }
 New-Item -ItemType Directory -Force -Path build | Out-Null
 & .\.venv\Scripts\python.exe -m pytest -q --junitxml=build/test-results.xml

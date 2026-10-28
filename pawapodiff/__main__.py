@@ -37,8 +37,9 @@ def main():
         import win32com.client
 
         bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-        if not (bundle / "frontend/dist/index.html").is_file():
-            parser.error("Packaged frontend assets are missing.")
+        from .web import frontend_assets, verify_frontend_http
+
+        frontend_assets(bundle / "frontend/dist")
         import json
         import tempfile
         from .render import _run_worker, _worker_command
@@ -58,6 +59,7 @@ def main():
             )
             if not state.get("probe"):
                 parser.error("Office worker startup verification failed.")
+        web_assets = verify_frontend_http(create_app())
         print(
             "PASS: Windows runtime, assets and isolated worker startup are available."
         )
@@ -70,6 +72,7 @@ def main():
                     "version": __version__,
                     "elevated": is_elevated(),
                     "runtime_check": "passed",
+                    "web_assets_checked_over_http": web_assets,
                 }
             )
         )
@@ -89,10 +92,20 @@ def main():
         show_startup_error(str(error))
         return 1
     token = secrets.token_urlsafe(32)
+    from .web import frontend_assets, frontend_directory
+
+    try:
+        frontend_assets(frontend_directory())
+    except (OSError, RuntimeError, UnicodeError) as error:
+        import logging
+
+        logging.getLogger(__name__).exception("Bundled frontend validation failed")
+        show_startup_error(str(error))
+        return 1
+    app = create_app(token)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    app = create_app(token)
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     )

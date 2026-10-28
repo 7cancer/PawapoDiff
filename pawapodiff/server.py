@@ -7,7 +7,6 @@ import logging
 import json
 import platform
 import struct
-import sys
 import time
 from pathlib import Path
 import secrets
@@ -17,7 +16,7 @@ import threading
 from zipfile import ZipFile, ZIP_DEFLATED
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
+from .web import BrowserFiles, frontend_directory
 from PIL import Image, ImageChops, ImageEnhance
 from pydantic import BaseModel, Field
 from .engine import inspect, compare
@@ -46,7 +45,7 @@ class ThresholdRequest(BaseModel):
     threshold: float = Field(ge=0, le=100)
 
 
-def create_app(token=None, root=None, renderer=render):
+def create_app(token=None, root=None, renderer=render, frontend=None):
     from .diagnostics import configure_diagnostics
 
     configure_diagnostics()
@@ -65,6 +64,10 @@ def create_app(token=None, root=None, renderer=render):
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.token = token
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ready", "version": __version__}
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -352,11 +355,8 @@ def create_app(token=None, root=None, renderer=render):
             },
         )
 
-    static = (
-        Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-        / "frontend"
-        / "dist"
-    )
+    static = Path(frontend) if frontend is not None else frontend_directory()
+    app.state.frontend = static
     if static.is_dir():
-        app.mount("/", StaticFiles(directory=static, html=True), name="frontend")
+        app.mount("/", BrowserFiles(directory=static, html=True), name="frontend")
     return app

@@ -4,8 +4,43 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>PawapoDiff</title>
+    <script src="/startup.js"></script>
   </head>
   <body>
+    <section
+      id="startup-status"
+      role="status"
+      style="
+        font-family: sans-serif;
+        max-width: 760px;
+        margin: 64px auto;
+        padding: 24px;
+        color: #17324d;
+        background: #f3f6fa;
+        border-radius: 12px;
+      "
+    >
+      <h1>PawapoDiffを起動しています</h1>
+      <p id="startup-message">
+        画面を読み込んでいます。しばらくお待ちください。
+      </p>
+      <pre
+        id="startup-detail"
+        style="white-space: pre-wrap; overflow-wrap: anywhere"
+      ></pre>
+      <div id="startup-actions" hidden>
+        <p>
+          ChromeまたはEdgeで起動時のURLを開き直してください。改善しない場合は、下の診断テキストを共有してください。
+        </p>
+        <button type="button" onclick="location.reload()">再読み込み</button>
+        <button type="button" id="startup-download">
+          画面の診断テキストを保存
+        </button>
+      </div>
+      <noscript
+        >JavaScriptが無効のため画面を開けません。ChromeまたはEdgeでJavaScriptを有効にして、起動時のURLを開いてください。</noscript
+      >
+    </section>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

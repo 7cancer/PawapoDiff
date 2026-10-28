@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { sessionToken } from "./session";
 type Shape = { name: string; box: number[] };
 type Change = {
   kind: string;
@@ -68,12 +69,7 @@ type Status = {
   pages: number;
   sides: string[];
 };
-const token =
-  new URLSearchParams(location.hash.slice(1)).get("token") ||
-  sessionStorage.getItem("pawapo-token") ||
-  "";
-if (token) sessionStorage.setItem("pawapo-token", token);
-history.replaceState(null, "", location.pathname);
+const token = sessionToken();
 async function api(path: string, options: RequestInit = {}) {
   const r = await fetch("/api/" + path, {
     ...options,
@@ -103,7 +99,11 @@ function App() {
     [right, setRight] = useState<File | null>(null);
   const [job, setJob] = useState(""),
     [status, setStatus] = useState<Status | null>(null),
-    [error, setError] = useState(""),
+    [error, setError] = useState(
+      token
+        ? ""
+        : "起動時の認証情報がありません。アプリを起動し直して、表示されたURLを開いてください。",
+    ),
     [busy, setBusy] = useState(false);
   const [logError, setLogError] = useState("");
   const [page, setPage] = useState(1),
@@ -112,6 +112,10 @@ function App() {
     [alpha, setAlpha] = useState(0.5),
     [marks, setMarks] = useState(true);
   const [activeChange, setActiveChange] = useState<number | null>(null);
+  useEffect(() => {
+    window.dispatchEvent(new Event("pawapo-ready"));
+    if (token) api("health").catch((error) => setError(String(error)));
+  }, []);
   useEffect(() => {
     setActiveChange(null);
   }, [page, job, marks, mode, status?.result]);
@@ -736,4 +740,12 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!, {
+  onUncaughtError(error) {
+    window.dispatchEvent(
+      new CustomEvent("pawapo-startup-error", {
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  },
+}).render(<App />);

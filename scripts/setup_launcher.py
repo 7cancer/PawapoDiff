@@ -401,5 +401,9 @@ if __name__ == "__main__":
         main()
     except Exception as error:
         logger.exception("Setup failed: stage=%s target=%s", PHASE, TARGET)
-        show_startup_error(failure_message(error, log_path), "PawapoDiff Setup")
+        message = failure_message(error, log_path)
+        if "--install-only" in sys.argv:
+            print(message)
+        else:
+            show_startup_error(message, "PawapoDiff Setup")
         raise SystemExit(1)

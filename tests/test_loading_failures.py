@@ -44,9 +44,15 @@ def rewrite(source, target, replacements):
 def test_missing_geometry_preserves_text_without_inventing_layout_differences(tmp_path):
     source = tmp_path / "source.pptx"
     p = deck(source)
+    moved = p.slides[0].shapes.add_textbox(
+        Inches(4), Inches(1), Inches(2), Inches(1)
+    )
+    moved.text = "配置の変更は表示する文章"
+    p.save(source)
     normal = engine.inspect(source)
     shape = p.slides[0].shapes[0]
     shape._element.spPr.remove(shape._element.spPr.xfrm)
+    moved.left += Inches(0.5)
     p.save(source)
     partial = engine.inspect(source)
     assert partial["slides"][0][0]["text"] == normal["slides"][0][0]["text"]
@@ -54,9 +60,11 @@ def test_missing_geometry_preserves_text_without_inventing_layout_differences(tm
     result = engine.compare(normal, partial)
     assert result["warnings"] and result["translations"][0]["uncertain"]
     changes = result["pages"][0]["changes"]
-    assert all(change.get("highlight") == "other" for change in changes)
-    assert any(
-        "解析できない" in field for change in changes for field in change["fields"]
+    assert len(changes) == 1
+    assert changes[0]["left"]["id"] == str(moved.shape_id)
+    assert changes[0]["highlight"] == "layout"
+    assert all(
+        "解析できない" not in field for change in changes for field in change["fields"]
     )
 
 
@@ -251,7 +259,7 @@ def test_input_error_is_logged_and_summary_is_never_empty(
             assert (
                 "INVALID_PACKAGE" in summary
                 and "日本語原本" in summary
-                and "0.4.2" in summary
+                and "0.4.3" in summary
             )
             assert len(z.read("diagnostic-summary.json")) > 100
 

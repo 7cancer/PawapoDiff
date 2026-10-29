@@ -568,11 +568,12 @@ def compare(left, right, threshold=1):
             target = b.get("text", "") if b else ""
             source_key, target_key = normalize(source), normalize(target)
             fields = []
-            if (a and a.get("analysis_incomplete")) or (
-                b and b.get("analysis_incomplete")
-            ):
+            analysis_incomplete = bool(
+                (a and a.get("analysis_incomplete"))
+                or (b and b.get("analysis_incomplete"))
+            )
+            if analysis_incomplete:
                 uncertain = True
-                fields.append("解析できない項目あり（画像で要確認）")
             delta = None
             layout = formatting = False
             if not a or not b:
@@ -606,7 +607,7 @@ def compare(left, right, threshold=1):
                     formatting = bool(changed_style)
                 if a["image"] != b["image"]:
                     fields.append("画像")
-            if fields or uncertain:
+            if not analysis_incomplete and (fields or uncertain):
                 highlight = (
                     "mixed"
                     if layout and formatting

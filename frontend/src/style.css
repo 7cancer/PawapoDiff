@@ -371,7 +371,7 @@ footer {
 }
 .translation-table-wrap {
   overflow: auto;
-  max-height: 640px;
+  max-height: 1280px;
   border: 1px solid #dce3ec;
   border-radius: 8px;
 }

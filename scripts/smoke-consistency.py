@@ -14,9 +14,11 @@ from PIL import ImageGrab
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pawapodiff.consistency_app import create_window
+from pawapodiff.windows_runtime import configure_console
 
 
 def smoke(directory):
+    configure_console()
     directory = Path(directory).resolve()
     create_demo = runpy.run_path(str(Path(__file__).with_name("create-demo.py")))[
         "create_demo"

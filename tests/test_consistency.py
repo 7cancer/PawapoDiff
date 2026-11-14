@@ -1,7 +1,5 @@
-from copy import deepcopy
 from pptx import Presentation
 from pptx.util import Inches
-from pptx.oxml.xmlchemy import OxmlElement
 from pawapodiff.consistency import check_consistency
 from pawapodiff.engine import inspect, compare
 from test_comparison_table import shape, document
@@ -100,3 +98,16 @@ def test_layout_inherited_font_change_reports_actual_names(tmp_path):
     ]
     assert any("Arial → Calibri" in field for field in fields)
     assert not any("指定なし" in field for field in fields)
+
+
+def test_distant_same_kind_shape_does_not_steal_pasted_translation():
+    from pawapodiff.engine import pair_text_shapes
+
+    placeholder = shape("placeholder", "日本語の原文")
+    placeholder.update(is_placeholder=True, placeholder={"idx": 1, "type": "BODY"})
+    other = shape("other", "別の文章")
+    other["box"] = [80, 80, 10, 10]
+    pasted = shape("pasted", "English")
+    pairs = pair_text_shapes([other, placeholder], [pasted])
+    assert next(b for a, b, _ in pairs if a and a["id"] == "placeholder") == pasted
+    assert next(b for a, b, _ in pairs if a and a["id"] == "other") is None

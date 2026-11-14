@@ -510,9 +510,7 @@ def placeholder_key(shape):
     return parent, metadata["idx"], metadata.get("type")
 
 
-def pair_shapes(left, right, *, text_mode=False):
-    if text_mode:
-        return pair_text_shapes(left, right)
+def pair_shapes(left, right):
     available = {shape["id"]: shape for shape in right}
     pairs, remaining = [], []
     for a in left:
@@ -564,6 +562,21 @@ def pair_text_shapes(left, right):
     placeholder became an unrelated textbox. Ambiguous matches stay visible.
     """
     pairs = pair_shapes(left, right)
+    # Structural matching falls back to the nearest shape of the same kind,
+    # even across a slide. Release such guesses so they cannot consume a pasted
+    # translation belonging to a different placeholder.
+    released = [
+        b for a, b, uncertain in pairs if a is not None and b is not None and uncertain
+    ]
+    pairs = [
+        (
+            (a, None, uncertain)
+            if a is not None and b is not None and uncertain
+            else (a, b, uncertain)
+        )
+        for a, b, uncertain in pairs
+    ]
+    pairs.extend((None, b, True) for b in released)
     unmatched_right = [
         b for a, b, _ in pairs if a is None and b.get("text", "").strip()
     ]
@@ -675,7 +688,6 @@ def compare(left, right, threshold=1):
                 )
         # Structural deletion/addition remains visible even if pasted text can
         # be recovered for the translation table.
-        text_pairs = [pair for pair in text_pairs if pair["page"] != page]
         for a, b, uncertain in pair_text_shapes(aa, bb):
             source = a.get("text", "") if a else ""
             target = b.get("text", "") if b else ""

@@ -91,9 +91,11 @@ def validate(path):
                     continue
                 if name.endswith(".rels"):
                     root = etree.fromstring(
-                        media_plan.replacements[name]
-                        if name in media_plan.replacements
-                        else z.read(name),
+                        (
+                            media_plan.replacements[name]
+                            if name in media_plan.replacements
+                            else z.read(name)
+                        ),
                         etree.XMLParser(resolve_entities=False, no_network=True),
                     )
                     # External media/OLE are not opened. Hyperlinks are safe to render without following.
@@ -377,7 +379,9 @@ def inspect(path, *, progress=None):
                     item.update(
                         text=sh.text,
                         style=optional(
-                            key, "文字書式", lambda: text_style(sh.text_frame)
+                            key,
+                            "文字書式",
+                            lambda: text_style(sh.text_frame, shape=sh, slide=slide),
                         ),
                     )
                 if isinstance(sh, Picture):
@@ -427,7 +431,9 @@ def inspect(path, *, progress=None):
                                         "style": optional(
                                             f"{key}/cell/{row_i}/{col_i}",
                                             "セルの文字書式",
-                                            lambda: text_style(cell.text_frame),
+                                            lambda: text_style(
+                                                cell.text_frame, shape=sh, slide=slide
+                                            ),
                                         ),
                                         "image": None,
                                     }
@@ -504,7 +510,9 @@ def placeholder_key(shape):
     return parent, metadata["idx"], metadata.get("type")
 
 
-def pair_shapes(left, right):
+def pair_shapes(left, right, *, text_mode=False):
+    if text_mode:
+        return pair_text_shapes(left, right)
     available = {shape["id"]: shape for shape in right}
     pairs, remaining = [], []
     for a in left:
@@ -547,6 +555,47 @@ def pair_shapes(left, right):
         pairs.append((a, b, not a.get("is_placeholder") or len(candidates) > 1))
     pairs.extend((None, b, not bool(placeholder_key(b))) for b in available.values())
     return pairs
+
+
+def pair_text_shapes(left, right):
+    """Preserve reliable identities; recover pasted text by nearby geometry.
+
+    IDs belong to a slide, so a reused ID alone is never evidence that a
+    placeholder became an unrelated textbox. Ambiguous matches stay visible.
+    """
+    pairs = pair_shapes(left, right)
+    unmatched_right = [
+        b for a, b, _ in pairs if a is None and b.get("text", "").strip()
+    ]
+    result = []
+    used = set()
+    for a, b, uncertain in pairs:
+        if a is None:
+            continue
+        if b is None and a.get("text", "").strip() and not a.get("geometry_unknown"):
+            candidates = []
+            for candidate in unmatched_right:
+                if (a["kind"] == "cell") != (candidate["kind"] == "cell"):
+                    continue
+                if candidate["id"] in used or candidate.get("geometry_unknown"):
+                    continue
+                ax, ay, aw, ah = a["box"]
+                bx, by, bw, bh = candidate["box"]
+                overlap = max(0, min(ax + aw, bx + bw) - max(ax, bx)) * max(
+                    0, min(ay + ah, by + bh) - max(ay, by)
+                )
+                area = min(aw * ah, bw * bh)
+                if area > 0 and overlap / area >= 0.5:
+                    score = sum(abs(x - y) for x, y in zip(a["box"], candidate["box"]))
+                    candidates.append((score, candidate))
+            candidates.sort(key=lambda item: item[0])
+            if candidates:
+                b = candidates[0][1]
+                used.add(b["id"])
+                uncertain = True  # position cannot prove semantic correspondence
+        result.append((a, b, uncertain))
+    result.extend((None, b, True) for b in unmatched_right if b["id"] not in used)
+    return result
 
 
 def compare(left, right, threshold=1):
@@ -611,11 +660,7 @@ def compare(left, right, threshold=1):
                 highlight = (
                     "mixed"
                     if layout and formatting
-                    else "layout"
-                    if layout
-                    else "format"
-                    if formatting
-                    else "other"
+                    else "layout" if layout else "format" if formatting else "other"
                 )
                 changes.append(
                     {
@@ -628,27 +673,34 @@ def compare(left, right, threshold=1):
                         "uncertain": uncertain,
                     }
                 )
-            if source_key or target_key:
-                notes = []
-                if uncertain:
-                    notes.append("対応付け要確認")
-                if (a and a.get("analysis_incomplete")) or (
-                    b and b.get("analysis_incomplete")
-                ):
-                    notes.append("解析が一部不完全・画像で要確認")
-                text_pairs.append(
-                    {
-                        "page": page,
-                        "shape": (a or b)["name"],
-                        "source": source,
-                        "target": target,
-                        "uncertain": uncertain,
-                        "notes": notes,
-                        "structural_placeholder": bool(
-                            (not a or not b) and (a or b).get("is_placeholder")
-                        ),
-                    }
-                )
+        # Structural deletion/addition remains visible even if pasted text can
+        # be recovered for the translation table.
+        text_pairs = [pair for pair in text_pairs if pair["page"] != page]
+        for a, b, uncertain in pair_text_shapes(aa, bb):
+            source = a.get("text", "") if a else ""
+            target = b.get("text", "") if b else ""
+            if not normalize(source) and not normalize(target):
+                continue
+            incomplete = bool(
+                (a and a.get("analysis_incomplete"))
+                or (b and b.get("analysis_incomplete"))
+            )
+            notes = ["対応付け要確認"] if uncertain else []
+            if incomplete:
+                notes.append("解析が一部不完全・画像で要確認")
+            text_pairs.append(
+                {
+                    "page": page,
+                    "shape": (a or b)["name"],
+                    "source": source,
+                    "target": target,
+                    "uncertain": uncertain or incomplete,
+                    "notes": notes,
+                    "structural_placeholder": bool(
+                        (not a or not b) and (a or b).get("is_placeholder")
+                    ),
+                }
+            )
         pages.append({"page": page, "changes": changes})
     rows, issues = translation_table(text_pairs)
     return {

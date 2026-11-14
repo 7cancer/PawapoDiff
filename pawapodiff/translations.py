@@ -23,11 +23,40 @@ def lines(text):
 def translation_table(text_pairs):
     groups = defaultdict(list)
     issues = []
+    # Repeated blocks whose line wrapping varies must be compared as blocks;
+    # equal line counts alone do not establish a translation correspondence.
+    repeated = defaultdict(list)
+    for pair in text_pairs:
+        repeated[normalize(pair["source"])].append(pair)
+    block_keys = {
+        key
+        for key, pairs in repeated.items()
+        if len({pair["page"] for pair in pairs}) > 1
+        and (
+            any(len(lines(pair["source"])) > 1 for pair in pairs)
+            or len(
+                {
+                    tuple(normalize(line) for line in lines(pair["source"]))
+                    for pair in pairs
+                }
+            )
+            > 1
+            or any(
+                len(lines(pair["source"])) != len(lines(pair["target"]))
+                for pair in pairs
+            )
+        )
+    }
     for pair in text_pairs:
         source_lines, target_lines = lines(pair["source"]), lines(pair["target"])
         source_offset = next(
             (i for i, line in enumerate(pair["source"].splitlines()) if line.strip()), 0
         )
+        if normalize(pair["source"]) in block_keys:
+            source_lines = [normalize(pair["source"])]
+            target_lines = (
+                [normalize(pair["target"])] if normalize(pair["target"]) else []
+            )
         aligned = len(source_lines) == len(target_lines)
         # Never guess which English line translates a Japanese line when counts
         # differ. Keep the whole target and explicitly flag uncertain alignment.

@@ -33,6 +33,7 @@ jobs:
         with:
           name: PawapoDiff-Windows-Setup
           path: |
+            dist/demo/
             dist/PawapoConsistency.exe
             dist/PawapoConsistency.exe.sha256
             dist/PawapoDiff-Setup.exe

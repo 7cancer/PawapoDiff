@@ -31,6 +31,7 @@ type Translation = {
   notes: string[];
 };
 type Result = {
+  speaker_notes?: { page: number; source: string; target: string; status: string; uncertain: boolean }[];
   notices?: {
     code?: string;
     side: string;
@@ -621,6 +622,20 @@ function App() {
                 )}
               </div>
             </section>
+            {result?.speaker_notes && result.speaker_notes.length > 0 && (
+              <section className="panel">
+                <h2>発表者ノート・日英比較 <small>{result.speaker_notes.length} ページ</small></h2>
+                <p>同じページ番号のノートを並べます。翻訳の意味の正確さは人が確認してください。ヘッダー・フッター・ページ番号は対象外です。</p>
+                <div className="translation-table-wrap">
+                  <table>
+                    <thead><tr><th>ページ</th><th>日本語ノート</th><th>英語ノート</th><th>判定</th></tr></thead>
+                    <tbody>{result.speaker_notes.map(note => (
+                      <tr key={note.page}><td>{note.page}</td><td style={{whiteSpace: "pre-wrap"}}>{note.source || "（ノートなし）"}</td><td style={{whiteSpace: "pre-wrap"}}>{note.target || "（ノートなし）"}</td><td>{note.status}</td></tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </section>
+            )}
             {result && (
               <section className="panel">
                 <div className="toolbar">

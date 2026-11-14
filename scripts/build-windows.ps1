@@ -31,3 +31,10 @@ if ($LASTEXITCODE) { throw 'payload creation failed' }
 if ($LASTEXITCODE) { throw 'installer packaging failed' }
 Copy-Item build/setup-payload/payload.zip dist/PawapoDiff-Portable.zip -Force
 Write-Host 'dist\PawapoDiff-Setup.exe を配布してください。クリックすると環境を展開して起動します。'
+
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoConsistency --onefile --windowed --paths . scripts/consistency_launcher.py
+if ($LASTEXITCODE) { throw 'consistency app packaging failed' }
+& ./dist/PawapoConsistency.exe --check-runtime
+if ($LASTEXITCODE) { throw 'consistency app runtime check failed' }
+$consistencyHash = (Get-FileHash dist/PawapoConsistency.exe -Algorithm SHA256).Hash.ToLower()
+"$consistencyHash  PawapoConsistency.exe" | Set-Content dist/PawapoConsistency.exe.sha256 -Encoding ascii

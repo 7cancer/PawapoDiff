@@ -94,15 +94,168 @@ def residual_xml(element, *, attributes=(), children=()):
     return format_xml(copy)
 
 
-def text_style(frame):
+def inherited_font(frame, paragraph, shape, slide):
+    """Resolve nearest DrawingML defaults, layout/master and theme typefaces."""
+    from pptx.text.text import Font
+
+    defaults = {key: None for key in LABELS}
+    defaults.update(bold=False, italic=False, underline=False)
+    if slide is None or shape is None:
+        return {key: None for key in LABELS}
+    level = paragraph.level + 1
+    nodes = []
+    # The last node wins; start at presentation and progress to local defaults.
+    presentation = slide.part.package.presentation_part._element
+    nodes.extend(presentation.xpath(f"./p:defaultTextStyle/a:lvl{level}pPr/a:defRPr"))
+    master = slide.slide_layout.slide_master
+    placeholder_type = (
+        str(shape.placeholder_format.type) if shape.is_placeholder else ""
+    )
+    category = (
+        "titleStyle"
+        if "TITLE" in placeholder_type
+        else (
+            "bodyStyle"
+            if shape.is_placeholder
+            and any(t in placeholder_type for t in ("BODY", "OBJECT", "SUBTITLE"))
+            else "otherStyle"
+        )
+    )
+    nodes.extend(
+        master._element.xpath(f"./p:txStyles/p:{category}/a:lvl{level}pPr/a:defRPr")
+    )
+    inherited_shapes = []
+    if shape.is_placeholder:
+        layout_shape = next(
+            (
+                item
+                for item in slide.slide_layout.placeholders
+                if item.placeholder_format.idx == shape.placeholder_format.idx
+            ),
+            None,
+        )
+        master_shape = next(
+            (
+                item
+                for item in master.placeholders
+                if layout_shape is not None
+                and item.placeholder_format.type == layout_shape.placeholder_format.type
+            ),
+            None,
+        )
+        inherited_shapes = [
+            item for item in (master_shape, layout_shape) if item is not None
+        ]
+    font_ref = None
+    for item in [*inherited_shapes, shape]:
+        refs = item._element.xpath("./p:style/a:fontRef")
+        if refs:
+            font_ref = refs[0].get("idx")
+        if item is shape:
+            body = frame._txBody
+        elif item.has_text_frame:
+            body = item.text_frame._txBody
+        else:
+            continue
+        nodes.extend(body.xpath(f"./a:lstStyle/a:lvl{level}pPr/a:defRPr"))
+        if item is not shape:
+            nodes.extend(body.xpath("./a:p/a:pPr/a:defRPr")[:1])
+    nodes.extend(paragraph._p.xpath("./a:pPr/a:defRPr"))
+    for node in nodes:
+        for key, value in font_values(Font(node)).items():
+            if value is not None:
+                defaults[key] = value
+    theme = next(
+        (
+            rel.target_part
+            for rel in master.part.rels.values()
+            if not rel.is_external and rel.reltype.endswith("/theme")
+        ),
+        None,
+    )
+    if theme is not None:
+        root = etree.fromstring(theme.blob)
+
+        def themed(token, script):
+            family = "majorFont" if token.startswith("+mj") else "minorFont"
+            group = root.find(f".//{{{A}}}fontScheme/{{{A}}}{family}")
+            if group is None:
+                return None
+            leaf = group.find(f"{{{A}}}{script}")
+            name = leaf.get("typeface") if leaf is not None else None
+            if not name and script == "ea":
+                supplemental = group.find(f"{{{A}}}font[@script='Jpan']")
+                name = (
+                    supplemental.get("typeface") if supplemental is not None else None
+                )
+            return name
+
+        for key, script, suffix in (
+            ("font", "latin", "lt"),
+            ("font_ea", "ea", "ea"),
+            ("font_cs", "cs", "cs"),
+        ):
+            value = defaults[key]
+            if value is None:
+                value = ("+mj-" if font_ref == "major" else "+mn-") + suffix
+            if value.startswith(("+mj-", "+mn-")):
+                defaults[key] = themed(value, script)
+    return defaults
+
+
+def text_style(frame, *, shape=None, slide=None):
     paragraphs = []
     for paragraph in frame.paragraphs:
-        defaults = font_values(paragraph.font)
+        defaults = inherited_font(frame, paragraph, shape, slide)
+        if shape is None or slide is None:
+            defaults.update(
+                {
+                    key: value
+                    for key, value in font_values(paragraph.font).items()
+                    if value is not None
+                }
+            )
         runs = []
         for run in paragraph.runs:
             if not run.text.strip():
                 continue
             values = font_values(run.font)
+            for key in ("font", "font_ea", "font_cs"):
+                if (
+                    values[key]
+                    and values[key].startswith(("+mj-", "+mn-"))
+                    and slide is not None
+                ):
+                    # Resolve the run's own major/minor theme selection.
+                    master = slide.slide_layout.slide_master
+                    theme = next(
+                        (
+                            rel.target_part
+                            for rel in master.part.rels.values()
+                            if not rel.is_external and rel.reltype.endswith("/theme")
+                        ),
+                        None,
+                    )
+                    if theme is not None:
+                        root = etree.fromstring(theme.blob)
+                        family = (
+                            "majorFont"
+                            if values[key].startswith("+mj-")
+                            else "minorFont"
+                        )
+                        script = {"font": "latin", "font_ea": "ea", "font_cs": "cs"}[
+                            key
+                        ]
+                        node = root.find(
+                            f".//{{{A}}}fontScheme/{{{A}}}{family}/{{{A}}}{script}"
+                        )
+                        name = node.get("typeface") if node is not None else None
+                        if not name and script == "ea":
+                            node = root.find(
+                                f".//{{{A}}}fontScheme/{{{A}}}{family}/{{{A}}}font[@script='Jpan']"
+                            )
+                            name = node.get("typeface") if node is not None else None
+                        values[key] = name or defaults[key]
             runs.append(
                 {
                     key: value if value is not None else defaults[key]
@@ -149,12 +302,16 @@ def text_style(frame):
         ],
         "wrap": frame.word_wrap,
         "autofit": str(frame.auto_size),
-        "font_scale": float(autofit.get("fontScale", "100000")) / 1000
-        if autofit is not None
-        else None,
-        "line_reduction": float(autofit.get("lnSpcReduction", "0")) / 1000
-        if autofit is not None
-        else None,
+        "font_scale": (
+            float(autofit.get("fontScale", "100000")) / 1000
+            if autofit is not None
+            else None
+        ),
+        "line_reduction": (
+            float(autofit.get("lnSpcReduction", "0")) / 1000
+            if autofit is not None
+            else None
+        ),
         "body_other": residual_xml(
             frame._txBody.bodyPr,
             attributes=("anchor", "lIns", "tIns", "rIns", "bIns", "wrap"),
@@ -232,6 +389,11 @@ def style_changes(left, right, *, compare_runs=True):
         defaults_changed = (
             left["default_attributes"][key] != right["default_attributes"][key]
         )
+        # Effective runs override unused paragraph defaults. A change to a
+        # default is user-visible only for empty text or inherited run values.
+        has_runs = bool(left["run_attributes"][key] and right["run_attributes"][key])
+        if compare_runs and has_runs and not run_changed:
+            continue
         if not run_changed and not defaults_changed:
             continue
         if not run_changed:

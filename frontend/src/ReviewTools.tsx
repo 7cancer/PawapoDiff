@@ -412,6 +412,130 @@ export function LLMPanel({
           LM Studioのモデル
         </a>
       </p>
+      <section
+        aria-label="推奨モデル・バージョン"
+        className="model-recommendations"
+      >
+        <h3>まず試すモデル・バージョンの目安</h3>
+        <p>
+          公式仕様を元にした導入候補です。本アプリでのモデル間の判定精度比較は未実施です。以下はOllamaのモデル名・タグで、LM
+          Studioでは同系列の対応モデルをロードし、モデル一覧に表示されるIDを選びます。
+        </p>
+        <div className="scroll-table">
+          <table>
+            <thead>
+              <tr>
+                <th>用途</th>
+                <th>モデル名・タグ</th>
+                <th>画像入力</th>
+                <th>モデル容量の目安</th>
+                <th>導入コマンド・公式情報</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>JP/ENスライド画像・レイアウト</td>
+                <td>
+                  <code>qwen2.5vl:7b</code>
+                </td>
+                <td>対応</td>
+                <td>約6.0GB</td>
+                <td>
+                  <code>ollama pull qwen2.5vl:7b</code>
+                  <br />
+                  <a
+                    href="https://ollama.com/library/qwen2.5vl:7b"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Qwen2.5-VL 7B公式
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td>翻訳・用語・発表者ノート</td>
+                <td>
+                  <code>qwen2.5:7b</code>
+                </td>
+                <td>文章のみ</td>
+                <td>約4.7GB</td>
+                <td>
+                  <code>ollama pull qwen2.5:7b</code>
+                  <br />
+                  <a
+                    href="https://ollama.com/library/qwen2.5:7b"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Qwen2.5 7B公式
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td>軽量な文章・ノート検査</td>
+                <td>
+                  <code>qwen2.5:3b</code>
+                </td>
+                <td>文章のみ</td>
+                <td>約1.9GB</td>
+                <td>
+                  <code>ollama pull qwen2.5:3b</code>
+                  <br />
+                  <a
+                    href="https://ollama.com/library/qwen2.5:3b"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Qwen2.5 3B公式
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td>軽量な画像検査の候補</td>
+                <td>
+                  <code>qwen2.5vl:3b</code>
+                </td>
+                <td>対応</td>
+                <td>約3.2GB</td>
+                <td>
+                  <code>ollama pull qwen2.5vl:3b</code>
+                  <br />
+                  <a
+                    href="https://ollama.com/library/qwen2.5vl:3b"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Qwen2.5-VL 3B公式
+                  </a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Ollamaは最新安定版を推奨します。
+          <a
+            href="https://ollama.com/library/qwen2.5vl"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Qwen2.5-VLの公式要件はOllama 0.7.0以上
+          </a>
+          です。LM Studioも最新安定版を利用し、
+          <a
+            href="https://lmstudio.ai/docs/developer/openai-compat"
+            target="_blank"
+            rel="noreferrer"
+          >
+            OpenAI互換のローカルサーバー
+          </a>
+          を起動してください。
+        </p>
+        <p>
+          容量はモデルファイルの目安で、実行時のRAM・VRAMとは別です。必要メモリは画像数・文脈長・量子化・実行環境によって増減します。上記の導入コマンドはOllama側で実行し、このアプリではモデルの自動ダウンロードは行いません。配布情報の確認日:
+          2026-11-17。
+        </p>
+      </section>
       <p>
         資料の文章と、画像検査を選んだ場合はスライド画像を、指定した接続先へ送ります。ローカルで完結させる場合はローカルサーバーを指定してください。APIキーはこの画面のメモリ内だけで保持します。
       </p>

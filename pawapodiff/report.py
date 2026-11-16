@@ -90,18 +90,6 @@ def report(result, images):
         rows.append(
             f'<tr class="{css}"><td>{page_links}<details><summary>要素と行を表示</summary>{locations}</details></td><td>{esc(row["source"])}</td><td>{"".join(variants)}</td><td>{esc(" / ".join(row["notes"]) or "—")}</td></tr>'
         )
-    speaker_notes = result.get("speaker_notes", [])
-    notes_html = ""
-    if speaker_notes:
-        note_rows = "".join(
-            f"<tr><td>{note['page']}</td><td>{esc(note['source'] or '（ノートなし）')}</td><td>{esc(note['target'] or '（ノートなし）')}</td><td>{esc(note['status'])}</td></tr>"
-            for note in speaker_notes
-        )
-        notes_html = (
-            "<h2>発表者ノート・日英比較</h2><p>同じページのノートを比較します。翻訳の意味は人が確認してください。</p><table><thead><tr><th>ページ</th><th>日本語ノート</th><th>英語ノート</th><th>判定</th></tr></thead><tbody>"
-            + note_rows
-            + "</tbody></table>"
-        )
     palette_css = "".join(
         f".box.{key}{{border-color:{color};background:{color}18}}.legend .{key}{{border-left:5px solid {color};padding-left:6px}}"
         for key, (color, label) in PALETTE.items()
@@ -127,7 +115,6 @@ def report(result, images):
         + "<h2>日英比較表</h2><p>改行ごとに分割し、原文側が2文字以下の行は省略します。同じ原文を全ページから1行にまとめ、英訳ごとに出現ページを表示します。行の対応が不明な場合は要確認と表示します。</p><table><thead><tr><th>ページ・要素</th><th>日本語原文</th><th>英訳</th><th>注釈</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
-        + notes_html
         + "".join(sections)
         + r"""<script>
 (() => {

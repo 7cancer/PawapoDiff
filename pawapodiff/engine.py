@@ -518,7 +518,25 @@ def placeholder_key(shape):
     return parent, metadata["idx"], metadata.get("type")
 
 
-def pair_shapes(left, right):
+def pair_shapes(left, right, overrides=None):
+    if overrides:
+        aa, bb = {a["id"]: a for a in left}, {b["id"]: b for b in right}
+        targets = [value for value in overrides.values() if value is not None]
+        if (
+            set(overrides) - set(aa)
+            or set(targets) - set(bb)
+            or len(targets) != len(set(targets))
+        ):
+            raise InputError(
+                "対応付けの図形IDが不正、または英語側の図形が重複しています。",
+                code="INVALID_MAPPING",
+            )
+        forced = [(aa[key], bb.get(value), False) for key, value in overrides.items()]
+        rest = pair_shapes(
+            [a for a in left if a["id"] not in overrides],
+            [b for b in right if b["id"] not in targets],
+        )
+        return forced + rest
     available = {shape["id"]: shape for shape in right}
     pairs, remaining = [], []
     for a in left:
@@ -563,13 +581,13 @@ def pair_shapes(left, right):
     return pairs
 
 
-def pair_text_shapes(left, right):
+def pair_text_shapes(left, right, overrides=None):
     """Preserve reliable identities; recover pasted text by nearby geometry.
 
     IDs belong to a slide, so a reused ID alone is never evidence that a
     placeholder became an unrelated textbox. Ambiguous matches stay visible.
     """
-    pairs = pair_shapes(left, right)
+    pairs = pair_shapes(left, right, overrides)
     # Structural matching falls back to the nearest shape of the same kind,
     # even across a slide. Release such guesses so they cannot consume a pasted
     # translation belonging to a different placeholder.
@@ -593,7 +611,12 @@ def pair_text_shapes(left, right):
     for a, b, uncertain in pairs:
         if a is None:
             continue
-        if b is None and a.get("text", "").strip() and not a.get("geometry_unknown"):
+        if (
+            b is None
+            and a["id"] not in (overrides or {})
+            and a.get("text", "").strip()
+            and not a.get("geometry_unknown")
+        ):
             candidates = []
             for candidate in unmatched_right:
                 if (a["kind"] == "cell") != (candidate["kind"] == "cell"):
@@ -619,7 +642,7 @@ def pair_text_shapes(left, right):
     return result
 
 
-def compare(left, right, threshold=1):
+def compare(left, right, threshold=1, *, mappings=None):
     if len(left["slides"]) != len(right["slides"]):
         raise InputError(
             f"ページ数が一致しません（原本{len(left['slides'])}ページ、英訳版{len(right['slides'])}ページ）。ページ数が同じ資料を指定してください。",
@@ -633,7 +656,7 @@ def compare(left, right, threshold=1):
     pages, text_pairs = [], []
     for page, (aa, bb) in enumerate(zip(left["slides"], right["slides"]), 1):
         changes = []
-        for a, b, uncertain in pair_shapes(aa, bb):
+        for a, b, uncertain in pair_shapes(aa, bb, (mappings or {}).get(page)):
             source = a.get("text", "") if a else ""
             target = b.get("text", "") if b else ""
             source_key, target_key = normalize(source), normalize(target)
@@ -696,7 +719,7 @@ def compare(left, right, threshold=1):
                 )
         # Structural deletion/addition remains visible even if pasted text can
         # be recovered for the translation table.
-        for a, b, uncertain in pair_text_shapes(aa, bb):
+        for a, b, uncertain in pair_text_shapes(aa, bb, (mappings or {}).get(page)):
             source = a.get("text", "") if a else ""
             target = b.get("text", "") if b else ""
             if not normalize(source) and not normalize(target):

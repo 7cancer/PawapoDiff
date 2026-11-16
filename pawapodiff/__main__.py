@@ -7,7 +7,7 @@ import uvicorn
 from .server import create_app
 
 
-def main():
+def main(mode="diff"):
     from .windows_runtime import configure_console
 
     configure_console()
@@ -33,8 +33,9 @@ def main():
 
         if sys.platform != "win32":
             parser.error("Runtime verification requires Windows.")
-        import pythoncom
-        import win32com.client
+        if mode == "diff":
+            import pythoncom
+            import win32com.client
 
         bundle = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
         from .web import frontend_assets, verify_frontend_http
@@ -44,24 +45,27 @@ def main():
         import tempfile
         from .render import _run_worker, _worker_command
 
-        with tempfile.TemporaryDirectory(prefix="PawapoDiff-probe-") as directory:
-            root = Path(directory)
-            request = root / "request.json"
-            request.write_text(
-                json.dumps({"mode": "probe", "state": str(root / "state.json")}),
-                encoding="utf-8",
-            )
-            state = _run_worker(
-                _worker_command(request),
-                root / "state.json",
-                root / "stderr.log",
-                timeout=30,
-            )
-            if not state.get("probe"):
-                parser.error("Office worker startup verification failed.")
-        web_assets = verify_frontend_http(create_app())
+        if mode == "diff":
+            with tempfile.TemporaryDirectory(prefix="PawapoDiff-probe-") as directory:
+                root = Path(directory)
+                request = root / "request.json"
+                request.write_text(
+                    json.dumps({"mode": "probe", "state": str(root / "state.json")}),
+                    encoding="utf-8",
+                )
+                state = _run_worker(
+                    _worker_command(request),
+                    root / "state.json",
+                    root / "stderr.log",
+                    timeout=30,
+                )
+                if not state.get("probe"):
+                    parser.error("Office worker startup verification failed.")
+        web_assets = verify_frontend_http(create_app(mode=mode))
         print(
-            "PASS: Windows runtime, assets and isolated worker startup are available."
+            "PASS: Windows runtime and Web UI assets are available."
+            if mode == "consistency"
+            else "PASS: Windows runtime, assets and isolated worker startup are available."
         )
         from .windows_runtime import is_elevated
         from . import __version__
@@ -102,7 +106,7 @@ def main():
         logging.getLogger(__name__).exception("Bundled frontend validation failed")
         show_startup_error(str(error))
         return 1
-    app = create_app(token)
+    app = create_app(token, mode=mode)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]

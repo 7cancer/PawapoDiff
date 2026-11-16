@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { sessionToken } from "./session";
+import { MappingEditor, ConsistencyPanel, LLMPanel } from "./ReviewTools";
 type Shape = { name: string; box: number[] };
 type Change = {
   kind: string;
@@ -31,7 +32,13 @@ type Translation = {
   notes: string[];
 };
 type Result = {
-  speaker_notes?: { page: number; source: string; target: string; status: string; uncertain: boolean }[];
+  speaker_notes?: {
+    page: number;
+    source: string;
+    target: string;
+    status: string;
+    uncertain: boolean;
+  }[];
   notices?: {
     code?: string;
     side: string;
@@ -69,6 +76,9 @@ type Status = {
   result: Result | null;
   pages: number;
   sides: string[];
+  consistency?: any;
+  render_status?: string;
+  render_error?: string;
 };
 const token = sessionToken();
 async function api(path: string, options: RequestInit = {}) {
@@ -112,14 +122,25 @@ function App() {
     [mode, setMode] = useState("pair"),
     [alpha, setAlpha] = useState(0.5),
     [marks, setMarks] = useState(true);
+  const [activeTab, setActiveTab] = useState("diff");
+  const [filters, setFilters] = useState<Record<string, boolean>>({
+    format: true,
+    layout: true,
+    mixed: true,
+    other: true,
+  });
   const [activeChange, setActiveChange] = useState<number | null>(null);
   useEffect(() => {
     window.dispatchEvent(new Event("pawapo-ready"));
-    if (token) api("health").catch((error) => setError(String(error)));
+    if (token)
+      api("health")
+        .then((r) => r.json())
+        .then((d) => setActiveTab(d.mode || "diff"))
+        .catch((error) => setError(String(error)));
   }, []);
   useEffect(() => {
     setActiveChange(null);
-  }, [page, job, marks, mode, status?.result]);
+  }, [page, job, marks, mode, status?.result, filters]);
   const [images, setImages] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!job) return;
@@ -155,7 +176,10 @@ function App() {
     setImages({});
     async function load() {
       try {
-        const sides = [...status!.sides, ...(status!.result ? ["diff"] : [])];
+        const sides = [
+          ...status!.sides,
+          ...(status!.sides.length ? ["diff"] : []),
+        ];
         const entries = await Promise.all(
           sides.map(async (s) => {
             const blob = await (
@@ -177,7 +201,7 @@ function App() {
       cancelled = true;
       urls.forEach(URL.revokeObjectURL);
     };
-  }, [job, status?.status, page]);
+  }, [job, status?.status, status?.render_status, page]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!left || !right) return;
@@ -198,7 +222,10 @@ function App() {
     data.append("threshold", String(threshold));
     try {
       const j = await (
-        await api("jobs", { method: "POST", body: data })
+        await api(
+          `jobs?mode=${activeTab === "diff" ? "diff" : "consistency"}`,
+          { method: "POST", body: data },
+        )
       ).json();
       setJob(j.id);
     } catch (e) {
@@ -217,8 +244,26 @@ function App() {
       setBusy(false);
     }
   }
+  async function generateImages() {
+    await api(`jobs/${job}/render`, { method: "POST" });
+    setBusy(true);
+    try {
+      for (;;) {
+        const data: Status = await (await api(`jobs/${job}`)).json();
+        setStatus(data);
+        if (data.render_status === "done") break;
+        if (data.render_status === "error")
+          throw Error(data.render_error || "画像を生成できませんでした");
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
   const result = status?.result,
-    changes = result?.pages[page - 1]?.changes || [];
+    changes = (result?.pages[page - 1]?.changes || []).filter(
+      (c) => filters[c.highlight || "other"],
+    );
   function activateChange(index: number, revealList = false) {
     if (!marks) return;
     setActiveChange(index);
@@ -286,11 +331,31 @@ function App() {
   return (
     <>
       <header>
-        <strong>▣ PawapoDiff</strong>
+        <strong>▣ PawapoDiff / Consistency</strong>
         <span>スライドの変化を、見逃さない。</span>
-        <small>LOCAL · オフライン処理</small>
+        <small>LOCAL · LLMは指定先へ接続</small>
       </header>
       <main>
+        <nav className="app-tabs" aria-label="アプリの機能">
+          <button
+            aria-pressed={activeTab === "diff"}
+            onClick={() => setActiveTab("diff")}
+          >
+            差分比較
+          </button>
+          <button
+            aria-pressed={activeTab === "consistency"}
+            onClick={() => setActiveTab("consistency")}
+          >
+            表記ゆれ検知
+          </button>
+          <button
+            aria-pressed={activeTab === "llm"}
+            onClick={() => setActiveTab("llm")}
+          >
+            LLMレビュー
+          </button>
+        </nav>
         <section className="intro">
           <div>
             <p className="eyebrow">POWERPOINT COMPARISON</p>
@@ -299,7 +364,11 @@ function App() {
               <br />
               ひと目で比較。
             </h1>
-            <p>配置・書式の変更と、翻訳の表記揺れを確認します。</p>
+            <p>
+              {activeTab === "diff"
+                ? "配置・書式の変更を確認します。ノート比較はCSVで保存できます。"
+                : "表記ゆれ・ノートをPowerPointの描画なしで解析します。"}
+            </p>
           </div>
           <form onSubmit={submit}>
             <label>
@@ -391,7 +460,7 @@ function App() {
           </p>
         )}
         {status?.status === "done" && (
-          <>
+          <div hidden={activeTab !== "diff"}>
             {!!result?.notices?.length && (
               <section className="media-notice">
                 <h2>
@@ -461,7 +530,9 @@ function App() {
                     ページ {String(i + 1).padStart(2, "0")}{" "}
                     <small>
                       {result?.pages[i].changes.filter(
-                        (c) => c.kind === "structure",
+                        (c) =>
+                          c.kind === "structure" &&
+                          filters[c.highlight || "other"],
                       ).length ?? "—"}{" "}
                       件
                     </small>
@@ -469,6 +540,19 @@ function App() {
                 ))}
               </nav>
               <div className="viewer">
+                {!status.sides.length && (
+                  <div className="panel">
+                    <p>
+                      スライド画像はまだ生成されていません。差分画像の表示にはWindows版PowerPointが必要です。
+                    </p>
+                    <button
+                      disabled={busy}
+                      onClick={() => action(generateImages)}
+                    >
+                      差分画像を生成
+                    </button>
+                  </div>
+                )}
                 <div className="toolbar">
                   <h2>ページ {page}</h2>
                   {result && (
@@ -495,12 +579,39 @@ function App() {
                   )}
                 </div>
                 {result && (
-                  <div className="legend" aria-label="ハイライトの凡例">
-                    <span className="format">書式のみ</span>
-                    <span className="layout">配置・サイズ・回転</span>
-                    <span className="mixed">書式と配置</span>
-                    <span className="other">画像・追加削除・要確認</span>
+                  <div className="legend" aria-label="差分の種類ごとの表示切替">
+                    {Object.entries({
+                      format: "書式のみ",
+                      layout: "位置・サイズ・回転のみ",
+                      mixed: "書式と位置の両方",
+                      other: "画像・追加削除・要確認",
+                    }).map(([key, label]) => (
+                      <label key={key} className={key}>
+                        <input
+                          type="checkbox"
+                          checked={filters[key]}
+                          onChange={(e) =>
+                            setFilters({ ...filters, [key]: e.target.checked })
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
                   </div>
+                )}
+                {result && (
+                  <MappingEditor
+                    api={api}
+                    job={job}
+                    page={page}
+                    onApply={(data) =>
+                      setStatus({
+                        ...status!,
+                        result: data.result,
+                        consistency: data.consistency,
+                      })
+                    }
+                  />
                 )}
                 {result && mode === "overlay" ? (
                   <>
@@ -622,23 +733,21 @@ function App() {
                 )}
               </div>
             </section>
-            {result?.speaker_notes && result.speaker_notes.length > 0 && (
-              <section className="panel">
-                <h2>発表者ノート・日英比較 <small>{result.speaker_notes.length} ページ</small></h2>
-                <p>同じページ番号のノートを並べます。翻訳の意味の正確さは人が確認してください。ヘッダー・フッター・ページ番号は対象外です。</p>
-                <div className="translation-table-wrap">
-                  <table>
-                    <thead><tr><th>ページ</th><th>日本語ノート</th><th>英語ノート</th><th>判定</th></tr></thead>
-                    <tbody>{result.speaker_notes.map(note => (
-                      <tr key={note.page}><td>{note.page}</td><td style={{whiteSpace: "pre-wrap"}}>{note.source || "（ノートなし）"}</td><td style={{whiteSpace: "pre-wrap"}}>{note.target || "（ノートなし）"}</td><td>{note.status}</td></tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              </section>
-            )}
             {result && (
               <section className="panel">
                 <div className="toolbar">
+                  <button
+                    onClick={() =>
+                      action(async () =>
+                        download(
+                          await api(`jobs/${job}/notes.csv`),
+                          "speaker-notes.csv",
+                        ),
+                      )
+                    }
+                  >
+                    発表者ノート比較をダウンロード
+                  </button>
                   <h2>
                     日英比較表 <small>{result.translations.length} 件</small>
                   </h2>
@@ -647,7 +756,13 @@ function App() {
                     onClick={() =>
                       action(async () =>
                         download(
-                          await api(`jobs/${job}/report`),
+                          await api(
+                            `jobs/${job}/report?categories=${Object.keys(
+                              filters,
+                            )
+                              .filter((k) => filters[k])
+                              .join(",")}`,
+                          ),
                           "PawapoDiff-report.html",
                         ),
                       )
@@ -744,8 +859,49 @@ function App() {
                 </div>
               </section>
             )}
+          </div>
+        )}
+        {status?.status === "done" && activeTab === "consistency" && (
+          <>
+            <ConsistencyPanel
+              api={api}
+              download={download}
+              job={job}
+              result={status.consistency}
+            />
+            <MappingEditor
+              api={api}
+              job={job}
+              page={page}
+              onApply={(data) =>
+                setStatus({
+                  ...status,
+                  result: data.result,
+                  consistency: data.consistency,
+                })
+              }
+            />
+            <label>
+              対応付けのページ
+              <select value={page} onChange={(e) => setPage(+e.target.value)}>
+                {Array.from({ length: status.pages }, (_, i) => (
+                  <option key={i} value={i + 1}>
+                    {i + 1}ページ
+                  </option>
+                ))}
+              </select>
+            </label>
           </>
         )}
+        <div hidden={activeTab !== "llm"}>
+          <LLMPanel
+            api={api}
+            download={download}
+            job={status?.status === "done" ? job : ""}
+            renderStatus={status?.render_status}
+            onRender={generateImages}
+          />
+        </div>
         <footer>
           画像内の文字・SmartArt・グラフ内部は目視で確認してください。原本ファイルは変更しません。
           <br />

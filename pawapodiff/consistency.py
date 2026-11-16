@@ -7,7 +7,7 @@ from .translations import JP, normalize
 from .speaker_notes import note_shapes, compare_speaker_notes
 
 
-def check_consistency(japanese, english):
+def check_consistency(japanese, english, *, mappings=None):
     if len(japanese["slides"]) != len(english["slides"]):
         raise InputError(
             "日本語版と英語版のページ数が一致しません。", code="PAGE_COUNT_MISMATCH"
@@ -19,7 +19,7 @@ def check_consistency(japanese, english):
     groups = defaultdict(list)
     for page, (left, right) in enumerate(zip(japanese["slides"], english["slides"]), 1):
         for scope, pairs in (
-            ("slide", pair_text_shapes(left, right)),
+            ("slide", pair_text_shapes(left, right, (mappings or {}).get(page))),
             (
                 "notes",
                 [

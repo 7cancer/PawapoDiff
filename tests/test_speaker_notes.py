@@ -57,7 +57,7 @@ def test_page_notes_include_target_only_and_ignore_break_codes(tmp_path):
     ]
 
 
-def test_notes_report_escapes_content(tmp_path):
+def test_notes_are_downloaded_instead_of_embedded_in_report(tmp_path):
     a, b = tmp_path / "ja.pptx", tmp_path / "en.pptx"
     deck(a, ["説明 <script>alert(1)</script>"])
     deck(b, ["English <b>note</b>"])
@@ -65,9 +65,8 @@ def test_notes_report_escapes_content(tmp_path):
     image = tmp_path / "image.png"
     Image.new("RGB", (100, 100)).save(image)
     output = report(result, {"left": [image], "right": [image]})
-    assert "発表者ノート・日英比較" in output
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in output
-    assert "&lt;b&gt;note&lt;/b&gt;" in output
+    assert "発表者ノート・日英比較" not in output
+    assert "English &lt;b&gt;note&lt;/b&gt;" not in output
     assert "<script>alert(1)</script>" not in output
 
 
@@ -115,4 +114,10 @@ def test_notes_api_recalculation_and_export(tmp_path):
         ).json()
         assert updated["speaker_notes"] == notes
         html = client.get(f"/api/jobs/{key}/report", headers=headers).text
-        assert "発表者ノート・日英比較" in html and "Speaker instructions" in html
+        assert (
+            "発表者ノート・日英比較" not in html and "Speaker instructions" not in html
+        )
+        response = client.get(f"/api/jobs/{key}/notes.csv", headers=headers)
+        assert response.status_code == 200
+        assert "Speaker instructions" in response.content.decode("utf-8-sig")
+        assert "発表者への説明" in response.content.decode("utf-8-sig")

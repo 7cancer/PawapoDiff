@@ -38,3 +38,6 @@ if ($LASTEXITCODE) { throw 'consistency app packaging failed' }
 if ($LASTEXITCODE) { throw 'consistency app runtime check failed' }
 $consistencyHash = (Get-FileHash dist/PawapoConsistency.exe -Algorithm SHA256).Hash.ToLower()
 "$consistencyHash  PawapoConsistency.exe" | Set-Content dist/PawapoConsistency.exe.sha256 -Encoding ascii
+
+& .\.venv\Scripts\python.exe scripts/smoke-consistency.py dist/demo
+if ($LASTEXITCODE) { throw 'consistency GUI/notes/CSV smoke verification failed' }

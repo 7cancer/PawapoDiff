@@ -13,6 +13,7 @@ from .errors import InputError
 from .media import plan_media, target_part
 from .translations import normalize, translation_table
 from .formatting import format_xml, text_style, style_changes
+from .speaker_notes import read_speaker_notes, compare_speaker_notes
 
 EMU = 12700
 
@@ -207,6 +208,7 @@ def inspect(path, *, progress=None):
         source_media = ZipFile(path)
         image_hashes = {}
         slides = []
+        speaker_notes = []
         inherited = []
         warnings = []
         signature_cache = {}
@@ -455,6 +457,11 @@ def inspect(path, *, progress=None):
             if progress:
                 progress(page, len(prs.slides))
             slides.append(walk(slide.shapes))
+            speaker_notes.append(
+                optional(
+                    "speaker-notes", "発表者ノート", lambda: read_speaker_notes(slide)
+                )
+            )
             key = str(slide.slide_layout.part.partname)
             if key not in signature_cache:
                 signature_cache[key] = optional(
@@ -473,6 +480,7 @@ def inspect(path, *, progress=None):
             "width": prs.slide_width / EMU,
             "height": prs.slide_height / EMU,
             "slides": slides,
+            "speaker_notes": speaker_notes,
             "inherited": inherited,
             "warnings": warnings,
             "notices": media_plan.notices,
@@ -721,6 +729,7 @@ def compare(left, right, threshold=1):
         "pages": pages,
         "issues": issues,
         "translations": rows,
+        "speaker_notes": compare_speaker_notes(left, right),
         "threshold": threshold,
         "notices": [
             dict(n, side=side)

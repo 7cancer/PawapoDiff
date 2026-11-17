@@ -3,13 +3,35 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import sys
 from pathlib import Path
 import tempfile
 import time
 
 
-def configure_diagnostics():
+class ConsoleHandler(logging.StreamHandler):
+    # Resolve stderr at emit time so redirected consoles/capture streams work.
+    _pawapo_console = True
+
+    def emit(self, record):
+        self.stream = sys.stderr
+        if self.stream is not None:
+            super().emit(record)
+
+
+def configure_diagnostics(*, console=False):
     logger = logging.getLogger("pawapodiff")
+    logger.setLevel(logging.INFO)
+    if console and not any(
+        getattr(h, "_pawapo_console", False) for h in logger.handlers
+    ):
+        handler = ConsoleHandler()
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(threadName)s %(name)s %(message)s"
+            )
+        )
+        logger.addHandler(handler)
     for handler in logger.handlers:
         if isinstance(handler, RotatingFileHandler):
             return Path(handler.baseFilename)

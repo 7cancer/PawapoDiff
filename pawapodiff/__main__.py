@@ -22,7 +22,12 @@ def main(mode="diff"):
     args = parser.parse_args()
     from .diagnostics import configure_diagnostics
 
-    configure_diagnostics()
+    log_path = configure_diagnostics(console=True)
+    import logging
+
+    logging.getLogger(__name__).info(
+        "診断ログ: %s", log_path or "保存先を利用できません（コンソールのみ）"
+    )
     if args.render_worker:
         from .office_worker import run_worker
 
@@ -124,6 +129,11 @@ def main(mode="diff"):
 
     if not args.no_browser:
         threading.Thread(target=open_browser, daemon=True).start()
+    logging.getLogger(__name__).info(
+        "Web UI origin=http://127.0.0.1:%s mode=%s（認証トークンは表示しません）",
+        port,
+        mode,
+    )
     print("PawapoDiff: 終了するにはこのウィンドウで Ctrl+C を押してください。")
     server.run(sockets=[sock])
 

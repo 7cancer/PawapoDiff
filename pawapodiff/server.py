@@ -37,6 +37,7 @@ from .uploads import receive_presentations
 from .report import report
 from .errors import describe, readable
 from . import __version__
+from .llm_diagnostics import LLMError, event, logging_context
 
 
 @dataclass
@@ -206,6 +207,9 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
         job = jobs[key]
         job.render_status = "running"
         job.render_error = None
+        logging.getLogger(__name__).info(
+            "[RENDER] start job=%s pages=%s", key, len(job.documents["left"]["slides"])
+        )
         try:
             rendered = {}
             for side in job.documents:
@@ -237,10 +241,20 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
                         )
             job.images = rendered
             job.render_status = "done"
+            logging.getLogger(__name__).info(
+                "[RENDER] done job=%s pages=%s", key, len(rendered["left"])
+            )
             job.message = "完了"
         except Exception as error:
             job.render_status = "error"
-            job.render_error = readable(describe(error))
+            diagnostic = describe(error)
+            job.render_error = readable(diagnostic)
+            logging.getLogger(__name__).error(
+                "[RENDER] failure job=%s code=%s exception=%s（PowerPointの起動状態・インストール・通常権限を確認してください）",
+                key,
+                diagnostic["code"],
+                type(error).__name__,
+            )
             if job.status != "done":
                 raise
 
@@ -524,6 +538,17 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
         pool.submit(render_images, key)
         return {"status": "running"}
 
+    @app.get("/api/llm/guide")
+    def ollama_guide():
+        path = frontend_directory().parents[1] / "docs" / "OLLAMA_GUIDE.md"
+        if not path.is_file():
+            raise HTTPException(
+                404, "手順書が同梱されていません。新しいビルドを使用してください。"
+            )
+        return FileResponse(
+            path, media_type="text/markdown; charset=utf-8", filename="Ollama-guide.md"
+        )
+
     @app.get("/api/llm/defaults")
     def defaults():
         return {"prompts": PROMPTS}
@@ -555,9 +580,17 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
         try:
             endpoint(body, "")
         except ValueError as error:
+            event(logging.ERROR, "review_rejected", job=key, code="LLM_INVALID_URL")
             raise HTTPException(422, str(error)) from error
         count = len(job.documents["left"]["slides"])
         if any(page < 1 or page > count for page in body.pages):
+            event(
+                logging.ERROR,
+                "review_rejected",
+                job=key,
+                code="LLM_PAGE_RANGE",
+                page_count=count,
+            )
             raise HTTPException(422, "ページ範囲が資料の範囲外です。")
         if any(
             task not in PROMPTS or not text.strip() or len(text) > 50000
@@ -567,6 +600,14 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
         if any(r["status"] in ("queued", "running") for r in job.reviews.values()):
             raise HTTPException(409, "検査が実行中です。")
         if "layout" in body.tasks and (not body.vision or job.render_status != "done"):
+            event(
+                logging.ERROR,
+                "review_rejected",
+                job=key,
+                code="LLM_IMAGES_NOT_READY",
+                vision=body.vision,
+                render_status=job.render_status,
+            )
             raise HTTPException(
                 422, "画像入力対応モデルを指定し、先に画像を生成してください。"
             )
@@ -595,14 +636,29 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
         images = deepcopy(job.images)
         mappings = deepcopy(job.mappings)
 
-        def worker():
+        def execute_review():
             record["status"] = "running"
+            started = time.monotonic()
+            event(
+                logging.INFO,
+                "review_start",
+                provider=body.provider,
+                model=body.model,
+                tasks=",".join(body.tasks),
+                page_count=(
+                    len(set(body.pages)) if body.pages else len(docs["left"]["slides"])
+                ),
+                timeout_s=body.timeout,
+                max_tokens=body.max_tokens,
+                secret=body.api_key.get_secret_value(),
+            )
 
             def progress(message, item=None):
                 if item is not None:
                     record["results"].append(item)
                 else:
                     record["message"] = message
+                    event(logging.INFO, "progress", stage=message)
 
             try:
                 run_review(
@@ -620,11 +676,39 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
             except InterruptedError:
                 record["status"], record["message"] = "cancelled", "中止しました"
             except Exception as error:
+                import traceback
+
+                stack = " > ".join(
+                    f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                    for frame in traceback.extract_tb(error.__traceback__)[-6:]
+                )
+                event(
+                    logging.ERROR,
+                    "review_failure",
+                    code=getattr(error, "code", "LLM_REVIEW_ERROR"),
+                    exception=type(error).__name__,
+                    request=getattr(error, "request_id", None),
+                    stack=stack,
+                    elapsed_s=round(time.monotonic() - started, 2),
+                )
                 record["status"], record["message"] = "error", (
                     str(error)
                     if isinstance(error, ValueError)
                     else "LLM検査に失敗しました。接続先とモデルを確認してください。"
                 )
+
+            finally:
+                event(
+                    logging.INFO,
+                    "review_finished",
+                    status=record["status"],
+                    elapsed_s=round(time.monotonic() - started, 2),
+                    completed_tasks=len(record["results"]),
+                )
+
+        def worker():
+            with logging_context(job=key, review=review_id):
+                execute_review()
 
         review_pool.submit(worker)
         return {"id": review_id}
@@ -643,6 +727,7 @@ def create_app(token=None, root=None, renderer=render, frontend=None, *, mode="d
     def cancel_review(key: str, review_id: str):
         record = get_review(key, review_id)
         record["cancel"].set()
+        event(logging.INFO, "cancel_requested", job=key, review=review_id)
         return {"message": "中止を要求しました。現在のモデル応答後に停止します。"}
 
     @app.get("/api/jobs/{key}/reviews/{review_id}/download")

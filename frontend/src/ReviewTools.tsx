@@ -401,6 +401,29 @@ export function LLMPanel({
   return (
     <section className="panel llm-panel">
       <h2>ローカルLLM・画像／翻訳レビュー</h2>
+      <div className="toolbar">
+        <button
+          onClick={() =>
+            action(async () =>
+              download(await api("llm/guide"), "Ollama-guide.md"),
+            )
+          }
+        >
+          Ollamaの動作手順を保存
+        </button>
+        <button
+          onClick={() =>
+            action(async () =>
+              download(await api("diagnostics"), "PawapoDiff-diagnostics.zip"),
+            )
+          }
+        >
+          診断ログを保存
+        </button>
+      </div>
+      <p>
+        初回の導入手順とエラーコードごとの対処は手順書を参照してください。実行中の詳細は起動コンソールと診断ログにも表示・保存します。
+      </p>
       <p>
         OllamaまたはOpenAI互換サーバー（LM
         Studioなど）で起動したモデルを使用します。

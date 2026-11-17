@@ -59,6 +59,19 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
     fullPage: true,
   });
   await page.getByRole("button", { name: "LLMレビュー", exact: true }).click();
+  const guideDownload = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Ollamaの動作手順を保存", exact: true })
+    .click();
+  expect((await guideDownload).suggestedFilename()).toBe("Ollama-guide.md");
+  const diagnosticDownload = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "診断ログを保存", exact: true })
+    .click();
+  expect((await diagnosticDownload).suggestedFilename()).toBe(
+    "PawapoDiff-diagnostics.zip",
+  );
+
   await page
     .getByLabel("接続先URL", { exact: true })
     .fill("http://127.0.0.1:8786");

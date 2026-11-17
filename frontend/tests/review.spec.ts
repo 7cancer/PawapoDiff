@@ -38,7 +38,7 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
     page.getByRole("heading", { name: "表記ゆれ検知", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("cell", { name: "Revenue", exact: true }),
+    page.getByRole("cell", { name: "Sales", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("cell", {
@@ -46,6 +46,47 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
       exact: true,
     }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "画像を生成してページ確認", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "JPスライド 1ページ", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "ENスライド 1ページ", exact: true }),
+  ).toBeVisible();
+  let releaseImages!: () => void;
+  const imageGate = new Promise<void>((resolve) => {
+    releaseImages = resolve;
+  });
+  await page.route(/\/images\/(left|right|diff)\/2$/, async (route) => {
+    await imageGate;
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "次のページ", exact: true }).click();
+  // A new page must not temporarily reuse the previous page's blob images.
+  await expect(
+    page.getByRole("img", { name: "JPスライド 1ページ", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("画像を読み込み中…", { exact: true }),
+  ).toHaveCount(2);
+  releaseImages();
+  await expect(
+    page.getByRole("cell", { name: "Revenue", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "JPスライド 2ページ", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "ENスライド 2ページ", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".notes-pair")).toContainText(
+    "Sales increased year on year.",
+  );
+  await expect(page.locator(".notes-pair")).not.toContainText(
+    "Revenue grew year over year.",
+  );
   const download = page.waitForEvent("download");
   await page
     .getByRole("button", {
@@ -90,7 +131,9 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
   await page
     .locator("details")
     .filter({
-      has: page.locator("summary", { hasText: "既定／カスタムプロンプト" }),
+      has: page.locator(":scope > summary", {
+        hasText: "既定／カスタムプロンプト",
+      }),
     })
     .locator("textarea")
     .nth(1)
@@ -104,6 +147,36 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
   await expect(
     page.getByText("API接続テスト応答（実LLMではありません）").first(),
   ).toBeVisible();
+  const currentResults = page.locator(".page-workspace .review-result");
+  await expect(currentResults).toHaveCount(2);
+  await expect(page.locator(".page-workspace")).toContainText(
+    "発表者ノート比較 1ページ",
+  );
+  await expect(page.locator(".page-workspace")).not.toContainText(
+    "発表者ノート比較 2ページ",
+  );
+  await page.getByRole("button", { name: "次のページ", exact: true }).click();
+  await expect(page.locator(".page-workspace")).toContainText(
+    "発表者ノート比較 2ページ",
+  );
+  await expect(page.locator(".page-workspace")).not.toContainText(
+    "発表者ノート比較 1ページ",
+  );
+  await expect(page.locator(".notes-pair")).toContainText(
+    "Sales increased year on year.",
+  );
+  await page
+    .getByRole("button", { name: "全体・一貫性レビュー（1件）", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "全体レビュー", exact: true })
+      .locator(".review-result"),
+  ).toHaveCount(1);
+  await expect(page.locator(".page-workspace")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "ページ別レビュー", exact: true })
+    .click();
   const resultDownload = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "結果・使用プロンプトを保存" })
@@ -167,4 +240,26 @@ test("diff categories and manual mapping update the real comparison; notes are d
     path: "test-results/diff-mapping-web.png",
     fullPage: true,
   });
+});
+
+test("consistency image generation errors are visible and can be retried", async ({
+  page,
+}) => {
+  await upload(page, "表記ゆれ検知");
+  await page.route(/\/api\/jobs\/[^/]+\/render$/, (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "PowerPointを起動できませんでした" }),
+    }),
+  );
+  await page
+    .getByRole("button", { name: "画像を生成してページ確認", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "PowerPointを起動できませんでした",
+  );
+  await expect(
+    page.getByRole("button", { name: "画像を生成してページ確認", exact: true }),
+  ).toBeEnabled();
 });

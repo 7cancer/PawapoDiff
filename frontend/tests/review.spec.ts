@@ -263,3 +263,34 @@ test("consistency image generation errors are visible and can be retried", async
     page.getByRole("button", { name: "画像を生成してページ確認", exact: true }),
   ).toBeEnabled();
 });
+
+test("Ollama defaults to Qwen3-VL 8B and preserves an explicitly selected installed model", async ({
+  page,
+}) => {
+  await page.goto("/#token=browser-test-token");
+  await page.getByRole("button", { name: "LLMレビュー", exact: true }).click();
+  const model = page.getByLabel("モデル名", { exact: true });
+  await expect(model).toHaveValue("qwen3-vl:8b");
+  await page.route("**/api/llm/models", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        models: [{ id: "other-model" }, { id: "qwen3-vl:8b" }],
+      }),
+    }),
+  );
+  await page
+    .getByRole("button", { name: "モデル一覧・接続確認", exact: true })
+    .click();
+  await expect(model).toHaveValue("qwen3-vl:8b");
+  await model.fill("other-model");
+  await page
+    .getByRole("button", { name: "モデル一覧・接続確認", exact: true })
+    .click();
+  await expect(model).toHaveValue("other-model");
+  await page.getByRole("combobox", { name: /接続方式/ }).selectOption("openai");
+  await expect(model).toHaveValue("");
+  await page.getByRole("combobox", { name: /接続方式/ }).selectOption("ollama");
+  await expect(model).toHaveValue("qwen3-vl:8b");
+});

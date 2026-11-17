@@ -22,9 +22,9 @@
 
 初めて使う方は **[Ollamaの導入・動作確認・エラー対処手順](docs/OLLAMA_GUIDE.md)** を参照してください。PowerShellのコマンドとWeb UIの設定値を順に記載しています。
 
-LLMタブに推奨モデル名・タグ（Qwen2.5-VL 7B/3B、Qwen2.5 7B/3B）、用途、モデル容量の目安、導入コマンドを表示します。Qwen2.5-VLの[公式要件](https://ollama.com/library/qwen2.5vl)はOllama 0.7.0以上です。Ollama/LM Studioは最新安定版を推奨します。モデル間の判定精度比較は未実施です。
+LLMタブの既定モデルは `qwen3-vl:8b` です。`ollama pull qwen3-vl:8b` で準備してください。[公式モデル情報](https://ollama.com/library/qwen3-vl:8b)。推奨モデル名・タグ（Qwen3-VL 8B、Qwen2.5-VL 7B/3B、Qwen2.5 7B/3B）、用途、モデル容量の目安、導入コマンドを表示します。Qwen2.5-VLの[公式要件](https://ollama.com/library/qwen2.5vl)はOllama 0.7.0以上です。Ollama/LM Studioは最新安定版を推奨します。モデル間の判定精度比較は未実施です。
 
-モデル本体は同梱しません。OllamaまたはLM Studioで利用したいモデルを用意・起動してください。例としてOllamaの `qwen2.5:3b` は文章用、`qwen2.5vl:7b` は画像入力用です。必要なメモリ・利用条件はモデルにより異なります。
+モデル本体は同梱しません。OllamaまたはLM Studioで利用したいモデルを用意・起動してください。例としてOllamaの `qwen2.5:3b` は文章用、既定の `qwen3-vl:8b` は画像・文章用です。必要なメモリ・利用条件はモデルにより異なります。
 
 1. LLMレビュータブでOllama（既定 `http://127.0.0.1:11434`）またはOpenAI互換（LM Studioの例 `http://127.0.0.1:1234/v1`）を選びます。URLを変更でき、必要な接続先だけAPIキーを入力します。
 2. 「モデル一覧・接続確認」で稼働中サーバーのモデルを取得し、モデルを選びます。「モデルの画像対応を確認」でOllamaの対応状況を取得します。OpenAI互換サーバーではモデルの仕様を確認して画像入力のチェックを指定します。

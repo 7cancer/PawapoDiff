@@ -32,24 +32,19 @@ Invoke-RestMethod -Uri http://127.0.0.1:11434/api/tags
 
 ## 3. モデルをダウンロードして単体で試す
 
-文章・ノート用の例です。
+既定の `qwen3-vl:8b` を準備します。文章・ノートと画像検査に利用できます。
 
 ```powershell
-ollama pull qwen2.5:7b
+ollama pull qwen3-vl:8b
 ollama list
-ollama run qwen2.5:7b "日本語で、接続確認OKとだけ返してください。"
+ollama run qwen3-vl:8b "日本語で、接続確認OKとだけ返してください。"
 ```
 
 モデルのダウンロード完了と、最後のコマンドで何らかの回答が出ることを確認します。回答の語句が完全一致する必要はありません。最初の読み込みは時間がかかる場合があります。
 
 PCが重い・メモリ不足になる場合は `qwen2.5:3b` に置き換えて試します。モデル名は、アプリでも同じタグまで含めて指定します。
 
-画像も検査する場合は別途、次の画像対応モデルを準備します。
-
-```powershell
-ollama pull qwen2.5vl:7b
-ollama list
-```
+画像検査も同じ既定モデルを使用できます。取得済みなら再ダウンロードは不要です。[Qwen3-VL 8Bの公式ページ](https://ollama.com/library/qwen3-vl:8b)も参照してください。
 
 軽量な画像モデルの候補は `qwen2.5vl:3b` です。**`qwen2.5` と `qwen2.5vl` は別モデルです。**通常の `qwen2.5:7b` では画像検査を行えません。[Qwen2.5-VLの公式ページ](https://ollama.com/library/qwen2.5vl)にOllamaの最低要件が記載されています。Ollamaは最新安定版を使用してください。
 
@@ -73,7 +68,7 @@ ollama list
 | 接続方式 | Ollama |
 | 接続先URL | `http://127.0.0.1:11434` |
 | APIキー | 空欄（同じPCで使う通常のローカルOllama） |
-| モデル名 | `qwen2.5:7b`（ダウンロードした名前） |
+| モデル名 | `qwen3-vl:8b`（既定。ダウンロードした名前） |
 | 応答待ち上限 | 600秒 |
 | 出力トークン上限 | 2048 |
 | ページ範囲 | `1` |
@@ -94,7 +89,7 @@ ollama list
 文章1ページが成功してから、必要な検査を追加します。
 
 - **発表者ノート**：「発表者ノート比較」をONにします。まずページ範囲は `1` のまま試します。
-- **画像・レイアウト**：モデルを `qwen2.5vl:7b` 等へ変更し、「モデルの画像対応を確認」を押します。「選択したモデルは画像入力に対応している」がONになったことを確認します。「画像を生成」を押し、画像の状態が `done` になってから「ページ別JP/EN画像・レイアウト」をONにして検査します。画像生成にはPowerPointが必要です。
+- **画像・レイアウト**：モデルを `qwen3-vl:8b` 等へ変更し、「モデルの画像対応を確認」を押します。「選択したモデルは画像入力に対応している」がONになったことを確認します。「画像を生成」を押し、画像の状態が `done` になってから「ページ別JP/EN画像・レイアウト」をONにして検査します。画像生成にはPowerPointが必要です。
 - **全ページ**：ページ範囲を空欄にします。`1-5,8` のような範囲指定もできます。「全体を通した確認・まとめ」もONにすると各検査の結果をまとめます。
 
 画像・翻訳・ノートの検査は、1ページの応答を受け取って画面へ反映し、そのページの選択検査が完了してから次のページへ進みます。画像は同じページの日英2枚だけを同時に送ります。全体の確認ではページ別の結果を集約し、画像を再送しません。
@@ -170,7 +165,8 @@ notepad "$env:LOCALAPPDATA\Ollama\server.log"
 - [Windows版Ollamaの導入・ログ保存先](https://docs.ollama.com/windows)
 - [OllamaのローカルAPIと認証](https://docs.ollama.com/api/introduction)
 - [Qwen2.5](https://ollama.com/library/qwen2.5)
-- [画像対応Qwen2.5-VL](https://ollama.com/library/qwen2.5vl)
+- [既定の画像対応Qwen3-VL](https://ollama.com/library/qwen3-vl:8b)
+- [軽量画像モデル候補Qwen2.5-VL](https://ollama.com/library/qwen2.5vl)
 
 ### ページごとの確認（v0.8.0）
 

@@ -133,7 +133,7 @@ ollama list
 | 表示・コード | 対処 |
 |---|---|
 | `LLM_CONNECTION_REFUSED` | Ollamaをスタートメニューから起動し、上の `Invoke-RestMethod` で確認。URL・ポートを確認。 |
-| `LLM_TIMEOUT` | 応答待ち上限を600秒にする。モデルを `ollama run` で先に試す。1ページ、小さいモデルで再実行。 |
+| `LLM_TIMEOUT` | 必要に応じて応答待ち上限を増やす（最大86400秒）。モデルを `ollama run` で先に試す。1ページ、小さいモデルで再実行。 |
 | `LLM_NOT_FOUND` / HTTP 404 | `ollama list` とモデル名・タグを一致させる。未取得なら `ollama pull モデル名`。URL末尾の `/api` を除く。 |
 | `LLM_AUTH_ERROR` / HTTP 401・403 | 同じPCの通常のOllamaはAPIキー空欄。別サーバーは接続先の認証設定を確認。 |
 | `LLM_OUT_OF_MEMORY` | 3B等へ変更。他の大きなモデル・アプリを終了し、入力ページや画像量を減らす。 |

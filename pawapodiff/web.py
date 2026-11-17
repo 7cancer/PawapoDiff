@@ -112,6 +112,12 @@ def verify_frontend_http(app):
             with urlopen(request, timeout=10) as response:
                 if json.load(response).get("status") != "ready":
                     raise RuntimeError("画面のAPI起動確認に失敗しました。")
+            guide_request = Request(
+                origin + "/api/llm/guide", headers={"X-Pawapo-Token": app.state.token}
+            )
+            with urlopen(guide_request, timeout=10) as response:
+                if "Ollama" not in response.read().decode("utf-8"):
+                    raise RuntimeError("Ollama手順書の同梱確認に失敗しました。")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

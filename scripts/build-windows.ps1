@@ -22,7 +22,7 @@ if ($testExitCode) {
     & .\.venv\Scripts\python.exe scripts/report-test-failures.py build/test-results.xml
     throw 'tests failed'
 }
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoDiff --onedir --paths . --collect-submodules win32com --collect-submodules uvicorn --hidden-import pythoncom --hidden-import pywintypes --add-data 'frontend/dist;frontend/dist' scripts/launcher.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoDiff --onedir --paths . --collect-submodules win32com --collect-submodules uvicorn --hidden-import pythoncom --hidden-import pywintypes --add-data 'frontend/dist;frontend/dist' --add-data 'docs/OLLAMA_GUIDE.md;docs' scripts/launcher.py
 if ($LASTEXITCODE) { throw 'packaging failed' }
 Write-Host 'dist\PawapoDiff\PawapoDiff.exe を起動してください。配布時はPawapoDiffフォルダー全体をコピーします。'
 & .\.venv\Scripts\python.exe scripts/create_payload.py dist/PawapoDiff build/setup-payload
@@ -32,7 +32,7 @@ if ($LASTEXITCODE) { throw 'installer packaging failed' }
 Copy-Item build/setup-payload/payload.zip dist/PawapoDiff-Portable.zip -Force
 Write-Host 'dist\PawapoDiff-Setup.exe を配布してください。クリックすると環境を展開して起動します。'
 
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoConsistency --onefile --paths . --collect-submodules win32com --collect-submodules uvicorn --hidden-import pythoncom --hidden-import pywintypes --add-data 'frontend/dist;frontend/dist' scripts/consistency_launcher.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --name PawapoConsistency --onefile --paths . --collect-submodules win32com --collect-submodules uvicorn --hidden-import pythoncom --hidden-import pywintypes --add-data 'frontend/dist;frontend/dist' --add-data 'docs/OLLAMA_GUIDE.md;docs' scripts/consistency_launcher.py
 if ($LASTEXITCODE) { throw 'consistency app packaging failed' }
 & ./dist/PawapoConsistency.exe --check-runtime
 if ($LASTEXITCODE) { throw 'consistency app runtime check failed' }

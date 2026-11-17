@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+const DEFAULT_OLLAMA_MODEL = "qwen3-vl:8b";
 export type Api = (path: string, options?: RequestInit) => Promise<Response>;
 type Download = (response: Response, name: string) => Promise<void>;
 const json = (data: unknown, method = "POST"): RequestInit => ({
@@ -421,7 +422,7 @@ export function LLMPanel({
   const [provider, setProvider] = useState("ollama"),
     [base, setBase] = useState("http://127.0.0.1:11434"),
     [key, setKey] = useState(""),
-    [model, setModel] = useState(""),
+    [model, setModel] = useState(DEFAULT_OLLAMA_MODEL),
     [models, setModels] = useState<any[]>([]),
     [vision, setVision] = useState(false),
     [info, setInfo] = useState("");
@@ -495,7 +496,14 @@ export function LLMPanel({
       const d = await (await api("llm/models", json(connection()))).json();
       setModels(d.models);
       setVision(false);
-      if (d.models.length) setModel(d.models[0].id);
+      if (d.models.length) {
+        const selected =
+          d.models.find((m: any) => m.id === model) ||
+          (provider === "ollama" &&
+            d.models.find((m: any) => m.id === DEFAULT_OLLAMA_MODEL)) ||
+          d.models[0];
+        setModel(selected.id);
+      }
       setInfo(`${d.models.length}個のモデルが見つかりました`);
     });
   }
@@ -683,21 +691,21 @@ export function LLMPanel({
               </thead>
               <tbody>
                 <tr>
-                  <td>JP/ENスライド画像・レイアウト</td>
+                  <td>既定：画像・翻訳・発表者ノート</td>
                   <td>
-                    <code>qwen2.5vl:7b</code>
+                    <code>qwen3-vl:8b</code>
                   </td>
                   <td>対応</td>
-                  <td>約6.0GB</td>
+                  <td>量子化・配布形式による（公式ページ参照）</td>
                   <td>
-                    <code>ollama pull qwen2.5vl:7b</code>
+                    <code>ollama pull qwen3-vl:8b</code>
                     <br />
                     <a
-                      href="https://ollama.com/library/qwen2.5vl:7b"
+                      href="https://ollama.com/library/qwen3-vl:8b"
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Qwen2.5-VL 7B公式
+                      Qwen3-VL 8B公式
                     </a>
                   </td>
                 </tr>
@@ -801,7 +809,9 @@ export function LLMPanel({
                     : "http://127.0.0.1:1234/v1",
                 );
                 setModels([]);
-                setModel("");
+                setModel(
+                  e.target.value === "ollama" ? DEFAULT_OLLAMA_MODEL : "",
+                );
                 setVision(false);
                 setInfo("");
               }}

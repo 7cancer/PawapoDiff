@@ -83,6 +83,8 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
   await expect(
     page.getByLabel("選択したモデルは画像入力に対応している"),
   ).toBeChecked();
+  await page.getByLabel("出力トークン上限", { exact: true }).fill("8192000");
+  await page.getByLabel("応答待ち上限（秒）", { exact: true }).fill("86400");
   await page.getByText("既定／カスタムプロンプト", { exact: true }).click();
   // Fill the task-specific prompt without changing the task checkbox.
   await page
@@ -106,7 +108,23 @@ test("real PPTX in Web consistency view; CSV download; LLM protocols and custom 
   await page
     .getByRole("button", { name: "結果・使用プロンプトを保存" })
     .click();
-  expect((await resultDownload).suggestedFilename()).toBe("llm-review.json");
+  const saved = await resultDownload;
+  expect(saved.suggestedFilename()).toBe("llm-review.json");
+  const stream = await saved.createReadStream();
+  const buffers: Buffer[] = [];
+  for await (const chunk of stream!) buffers.push(chunk);
+  const review = JSON.parse(Buffer.concat(buffers).toString("utf-8"));
+  expect(review.max_tokens).toBe(8192000);
+  expect(
+    review.results
+      .filter((r: any) => r.task === "translation")
+      .map((r: any) => r.page),
+  ).toEqual([1, 2, 3, 4]);
+  expect(
+    review.results
+      .filter((r: any) => r.task === "notes")
+      .map((r: any) => r.page),
+  ).toEqual([1, 2, 3, 4]);
   await page.screenshot({
     path: "test-results/llm-review-web.png",
     fullPage: true,

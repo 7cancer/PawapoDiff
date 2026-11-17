@@ -139,7 +139,11 @@ def test_real_http_protocols_and_image_payloads(provider, tmp_path):
     Image.new("RGB", (20, 10)).save(image)
     with llm_server() as (url, requests):
         config = ReviewRequest(
-            provider=provider, base_url=url, model="test-vision", vision=True
+            provider=provider,
+            base_url=url,
+            model="test-vision",
+            vision=True,
+            max_tokens=8192000,
         )
         assert list_models(config)[0]["id"] == "test-vision"
         result = chat(config, "プロンプト", {"source": "原文"}, [image, image])
@@ -147,8 +151,10 @@ def test_real_http_protocols_and_image_payloads(provider, tmp_path):
         path, body = requests[-1]
         if provider == "ollama":
             assert path == "/api/chat" and len(body["messages"][1]["images"]) == 2
+            assert body["options"]["num_predict"] == 8192000
         else:
             assert path == "/v1/chat/completions"
+            assert body["max_tokens"] == 8192000
             assert body["messages"][1]["content"][1]["image_url"]["url"].startswith(
                 "data:image/jpeg;base64,"
             )
@@ -301,7 +307,12 @@ def test_page_image_review_and_overview_use_selected_pages_and_mapping(tmp_path)
         overview = [body for path, body in requests if path == "/api/chat"][-1][
             "messages"
         ][1]["content"]
-        assert "image_reviewed_pages" in overview and "paired_text" in overview
+        assert "image_reviewed_pages" in overview and "page_findings" in overview
+        assert "paired_text" not in overview
+        image_payload = json.loads(
+            image_call["messages"][1]["content"].rsplit("\n", 1)[-1]
+        )
+        assert image_payload["pages"][0]["paired_text"][0]["EN"] == ""
         assert "Example Product" in overview
         assert (
             client.get(f"/api/jobs/{key}/report?categories=", headers=h).status_code

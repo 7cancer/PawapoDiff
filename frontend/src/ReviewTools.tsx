@@ -271,7 +271,7 @@ export function LLMPanel({
     [referenceText, setReferenceText] = useState(""),
     [references, setReferences] = useState<{ url: string; text: string }[]>([]),
     [pages, setPages] = useState(""),
-    [timeout, setTimeoutValue] = useState(180),
+    [timeout, setTimeoutValue] = useState(3600),
     [maxTokens, setMaxTokens] = useState(4096);
   const [error, setError] = useState(""),
     [working, setWorking] = useState(false),
@@ -624,7 +624,7 @@ export function LLMPanel({
           <input
             type="number"
             min="5"
-            max="600"
+            max="86400"
             value={timeout}
             onChange={(e) => setTimeoutValue(+e.target.value)}
           />
@@ -634,12 +634,18 @@ export function LLMPanel({
           <input
             type="number"
             min="256"
-            max="16384"
+            max="8192000"
             value={maxTokens}
             onChange={(e) => setMaxTokens(+e.target.value)}
           />
         </label>
       </div>
+      <p>
+        出力トークンの設定可能上限は8,192,000です。実際の生成量はモデル・サーバーの出力上限と文脈長に依存します。応答待ちは1リクエストにつき最大86,400秒（24時間）、初期値は3,600秒（1時間）です。
+      </p>
+      <p>
+        ページごとに画像はJP/ENの2枚をペアで送信します。画像・翻訳・ノートは1ページの応答を受け取って表示してから次へ進みます。全体の確認は最後にページ別結果を使い、画像は再送しません。
+      </p>
       <div className="toolbar">
         <button disabled={working || !!running} onClick={loadModels}>
           モデル一覧・接続確認

@@ -141,21 +141,206 @@ export function MappingEditor({
   );
 }
 
+export type PageContext = {
+  page: number;
+  count: number;
+  onPageChange: (page: number) => void;
+  images: Record<string, string>;
+  notes: { page: number; source: string; target: string; status?: string }[];
+  renderStatus?: string;
+  onRender: () => Promise<void>;
+};
+function PageWorkspace({
+  context: c,
+  counts = {},
+  children,
+  noteContent,
+  mapping,
+}: {
+  context: PageContext;
+  counts?: Record<number, number>;
+  children: React.ReactNode;
+  noteContent?: React.ReactNode;
+  mapping?: React.ReactNode;
+}) {
+  const note = c.notes.find((n) => n.page === c.page);
+  return (
+    <div className="workspace page-workspace">
+      <nav aria-label="スライド別確認">
+        <h3>SLIDES</h3>
+        {Array.from({ length: c.count }, (_, i) => i + 1).map((p) => (
+          <button
+            key={p}
+            aria-current={p === c.page ? "page" : undefined}
+            className={p === c.page ? "active" : ""}
+            onClick={() => c.onPageChange(p)}
+          >
+            {p}ページ {counts[p] ? `（${counts[p]}件）` : ""}
+          </button>
+        ))}
+      </nav>
+      <div className="page-viewer">
+        <div className="toolbar">
+          <button
+            disabled={c.page <= 1}
+            onClick={() => c.onPageChange(c.page - 1)}
+          >
+            前のページ
+          </button>
+          <h3>
+            {c.page} / {c.count}ページ
+          </h3>
+          <button
+            disabled={c.page >= c.count}
+            onClick={() => c.onPageChange(c.page + 1)}
+          >
+            次のページ
+          </button>
+        </div>
+        <div className="page-media">
+          {[
+            ["left", "JP"],
+            ["right", "EN"],
+          ].map(([side, label]) => (
+            <figure key={side}>
+              <figcaption>
+                {label} · {c.page}ページ
+              </figcaption>
+              {c.images[side] ? (
+                <img
+                  src={c.images[side]}
+                  alt={`${label}スライド ${c.page}ページ`}
+                />
+              ) : (
+                <p>
+                  {c.renderStatus === "done"
+                    ? "画像を読み込み中…"
+                    : "スライド画像は未生成です。"}
+                </p>
+              )}
+            </figure>
+          ))}
+        </div>
+        {c.renderStatus !== "done" && (
+          <div className="toolbar">
+            <button
+              disabled={c.renderStatus === "running"}
+              onClick={c.onRender}
+            >
+              {c.renderStatus === "running"
+                ? "画像を生成中…"
+                : "画像を生成してページ確認"}
+            </button>
+            <span>画像生成にはWindows版PowerPointが必要です。</span>
+          </div>
+        )}
+        <section aria-label="このページのスライド指摘">
+          <h3>スライド · {c.page}ページ</h3>
+          {children}
+        </section>
+        <section aria-label="このページの発表者ノート">
+          <h3>発表者ノート · {c.page}ページ</h3>
+          <div className="notes-pair">
+            {[
+              ["JP", note?.source],
+              ["EN", note?.target],
+            ].map(([label, text]) => (
+              <div key={label}>
+                <h4>{label}</h4>
+                <pre>{text || "（発表者ノートなし）"}</pre>
+              </div>
+            ))}
+          </div>
+          {noteContent}
+        </section>
+        {mapping}
+      </div>
+    </div>
+  );
+}
 export function ConsistencyPanel({
   api,
   download,
   job,
   result,
+  context,
+  onApply,
 }: {
   api: Api;
   download: Download;
   job: string;
   result: any;
+  context: PageContext;
+  onApply: (data: any) => void;
 }) {
   const [only, setOnly] = useState(true);
   const rows = (result?.rows || []).filter(
     (r: any) => !only || r.inconsistent || r.missing || r.uncertain,
   );
+  const counts: Record<number, number> = {};
+  rows.forEach((r: any) =>
+    r.entries.forEach((e: any) => (counts[e.page] = (counts[e.page] || 0) + 1)),
+  );
+  function candidates(scope: string) {
+    const current = rows.filter(
+      (r: any) =>
+        r.scope === scope &&
+        r.entries.some((e: any) => e.page === context.page),
+    );
+    return current.length ? (
+      current.map((r: any, i: number) => (
+        <article className="review-result" key={i}>
+          <strong>
+            {[
+              r.inconsistent && "表記差分",
+              r.missing && "英語なし",
+              r.uncertain && "対応要確認",
+            ]
+              .filter(Boolean)
+              .join(" / ") || "一致"}
+          </strong>
+          <table>
+            <thead>
+              <tr>
+                <th>JP表記</th>
+                <th>このページのEN表記</th>
+                <th>場所・補足</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.entries
+                .filter((e: any) => e.page === context.page)
+                .map((e: any, j: number) => (
+                  <tr key={j}>
+                    <td>{r.source}</td>
+                    <td>{e.target || "（英語なし）"}</td>
+                    <td>
+                      {e.shape}
+                      <p>{e.note}</p>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+          <details>
+            <summary>他ページの英語表記・移動</summary>
+            {r.entries
+              .filter((e: any) => e.page !== context.page)
+              .map((e: any, j: number) => (
+                <p key={j}>
+                  <button onClick={() => context.onPageChange(e.page)}>
+                    {e.page}ページへ
+                  </button>{" "}
+                  {e.target || "（英語なし）"}
+                </p>
+              ))}
+          </details>
+        </article>
+      ))
+    ) : (
+      <p>このページに表示対象の候補はありません。</p>
+    );
+  }
   return (
     <section className="panel">
       <div className="toolbar">
@@ -167,7 +352,7 @@ export function ConsistencyPanel({
             )
           }
         >
-          CSVをダウンロード
+          全ページCSVをダウンロード
         </button>
         <button
           onClick={() =>
@@ -188,50 +373,23 @@ export function ConsistencyPanel({
         差分・英語なし・対応要確認のみ
       </label>
       <p>
-        スライドとノートは別々に集計します。改行・空白の違いは正規化します。
+        ページを選んで画像・表記・ノートを確認します。他ページの訳語は各候補から参照できます。一括確認は全ページCSVをご利用ください。
       </p>
-      <div className="scroll-table">
-        <table>
-          <thead>
-            <tr>
-              <th>対象・日本語</th>
-              <th>ページ・場所</th>
-              <th>英語表記</th>
-              <th>判定</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.flatMap((r: any, i: number) =>
-              r.entries.map((e: any, j: number) => (
-                <tr
-                  key={`${i}-${j}`}
-                  className={r.inconsistent ? "inconsistent" : ""}
-                >
-                  <td>
-                    {r.scope === "notes" ? "発表者ノート" : "スライド"}
-                    <p>{r.source}</p>
-                  </td>
-                  <td>
-                    {e.page}ページ / {e.shape}
-                  </td>
-                  <td>{e.target || "（英語なし）"}</td>
-                  <td>
-                    {[
-                      r.inconsistent && "表記差分",
-                      r.missing && "英語なし",
-                      r.uncertain && "対応要確認",
-                    ]
-                      .filter(Boolean)
-                      .join(" / ") || "一致"}
-                    <p>{e.note}</p>
-                  </td>
-                </tr>
-              )),
-            )}
-          </tbody>
-        </table>
-      </div>
-      {!rows.length && <p>表示対象の表記ゆれ候補はありません。</p>}
+      <PageWorkspace
+        context={context}
+        counts={counts}
+        noteContent={candidates("notes")}
+        mapping={
+          <MappingEditor
+            api={api}
+            job={job}
+            page={context.page}
+            onApply={onApply}
+          />
+        }
+      >
+        {candidates("slide")}
+      </PageWorkspace>
     </section>
   );
 }
@@ -249,13 +407,17 @@ export function LLMPanel({
   job,
   renderStatus,
   onRender,
+  context,
 }: {
   api: Api;
   download: Download;
   job: string;
   renderStatus?: string;
   onRender: () => Promise<void>;
+  context: PageContext;
 }) {
+  const [scope, setScope] = useState("page");
+  const [settingsOpen, setSettingsOpen] = useState(true);
   const [provider, setProvider] = useState("ollama"),
     [base, setBase] = useState("http://127.0.0.1:11434"),
     [key, setKey] = useState(""),
@@ -381,6 +543,9 @@ export function LLMPanel({
           }),
         )
       ).json();
+      context.onPageChange(selected.length ? Math.min(...selected) : 1);
+      setScope("page");
+      setSettingsOpen(false);
       setReviewId(d.id);
       setReview({
         id: d.id,
@@ -398,6 +563,62 @@ export function LLMPanel({
     notes: "発表者ノート比較",
     overview: "全体を通した確認・まとめ",
   };
+  function renderResults(results: any[]) {
+    return (
+      <>
+        {results.map((r, i) => (
+          <article className="review-result" key={i}>
+            <h3>
+              {labels[r.task]} {r.page ? `${r.page}ページ` : ""}
+            </h3>
+            {r.warning && <p className="error">{r.warning}</p>}
+            <p className="preserve">{r.summary}</p>
+            <div className="scroll-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ページ・分類</th>
+                    <th>確認候補・根拠</th>
+                    <th>修正案・参照元</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.issues.map((issue: any, j: number) => (
+                    <tr key={j}>
+                      <td>
+                        {String(issue.page ?? "全体")} /{" "}
+                        {String(issue.category ?? "")} /{" "}
+                        {String(issue.severity ?? "")}
+                      </td>
+                      <td>
+                        {String(issue.description ?? "")}
+                        <p>{String(issue.evidence ?? "")}</p>
+                      </td>
+                      <td>
+                        {String(issue.suggestion ?? "")}
+                        <p>{String(issue.reference ?? "未確認")}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <details>
+              <summary>モデルの応答全文</summary>
+              <pre>{r.raw}</pre>
+            </details>
+          </article>
+        ))}
+      </>
+    );
+  }
+  const pageResults =
+    review?.results.filter((r) => r.page === context.page) || [];
+  const globalResults = review?.results.filter((r) => r.page == null) || [];
+  const counts: Record<number, number> = {};
+  review?.results.forEach((r) => {
+    if (r.page) counts[r.page] = (counts[r.page] || 0) + 1;
+  });
   return (
     <section className="panel llm-panel">
       <h2>ローカルLLM・画像／翻訳レビュー</h2>
@@ -435,367 +656,378 @@ export function LLMPanel({
           LM Studioのモデル
         </a>
       </p>
-      <section
-        aria-label="推奨モデル・バージョン"
-        className="model-recommendations"
+      <details
+        open={settingsOpen}
+        onToggle={(e) => setSettingsOpen(e.currentTarget.open)}
       >
-        <h3>まず試すモデル・バージョンの目安</h3>
+        <summary>接続・モデル・検査設定</summary>
+        <section
+          aria-label="推奨モデル・バージョン"
+          className="model-recommendations"
+        >
+          <h3>まず試すモデル・バージョンの目安</h3>
+          <p>
+            公式仕様を元にした導入候補です。本アプリでのモデル間の判定精度比較は未実施です。以下はOllamaのモデル名・タグで、LM
+            Studioでは同系列の対応モデルをロードし、モデル一覧に表示されるIDを選びます。
+          </p>
+          <div className="scroll-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>用途</th>
+                  <th>モデル名・タグ</th>
+                  <th>画像入力</th>
+                  <th>モデル容量の目安</th>
+                  <th>導入コマンド・公式情報</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>JP/ENスライド画像・レイアウト</td>
+                  <td>
+                    <code>qwen2.5vl:7b</code>
+                  </td>
+                  <td>対応</td>
+                  <td>約6.0GB</td>
+                  <td>
+                    <code>ollama pull qwen2.5vl:7b</code>
+                    <br />
+                    <a
+                      href="https://ollama.com/library/qwen2.5vl:7b"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Qwen2.5-VL 7B公式
+                    </a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>翻訳・用語・発表者ノート</td>
+                  <td>
+                    <code>qwen2.5:7b</code>
+                  </td>
+                  <td>文章のみ</td>
+                  <td>約4.7GB</td>
+                  <td>
+                    <code>ollama pull qwen2.5:7b</code>
+                    <br />
+                    <a
+                      href="https://ollama.com/library/qwen2.5:7b"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Qwen2.5 7B公式
+                    </a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>軽量な文章・ノート検査</td>
+                  <td>
+                    <code>qwen2.5:3b</code>
+                  </td>
+                  <td>文章のみ</td>
+                  <td>約1.9GB</td>
+                  <td>
+                    <code>ollama pull qwen2.5:3b</code>
+                    <br />
+                    <a
+                      href="https://ollama.com/library/qwen2.5:3b"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Qwen2.5 3B公式
+                    </a>
+                  </td>
+                </tr>
+                <tr>
+                  <td>軽量な画像検査の候補</td>
+                  <td>
+                    <code>qwen2.5vl:3b</code>
+                  </td>
+                  <td>対応</td>
+                  <td>約3.2GB</td>
+                  <td>
+                    <code>ollama pull qwen2.5vl:3b</code>
+                    <br />
+                    <a
+                      href="https://ollama.com/library/qwen2.5vl:3b"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Qwen2.5-VL 3B公式
+                    </a>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Ollamaは最新安定版を推奨します。
+            <a
+              href="https://ollama.com/library/qwen2.5vl"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Qwen2.5-VLの公式要件はOllama 0.7.0以上
+            </a>
+            です。LM Studioも最新安定版を利用し、
+            <a
+              href="https://lmstudio.ai/docs/developer/openai-compat"
+              target="_blank"
+              rel="noreferrer"
+            >
+              OpenAI互換のローカルサーバー
+            </a>
+            を起動してください。
+          </p>
+          <p>
+            容量はモデルファイルの目安で、実行時のRAM・VRAMとは別です。必要メモリは画像数・文脈長・量子化・実行環境によって増減します。上記の導入コマンドはOllama側で実行し、このアプリではモデルの自動ダウンロードは行いません。配布情報の確認日:
+            2026-11-17。
+          </p>
+        </section>
         <p>
-          公式仕様を元にした導入候補です。本アプリでのモデル間の判定精度比較は未実施です。以下はOllamaのモデル名・タグで、LM
-          Studioでは同系列の対応モデルをロードし、モデル一覧に表示されるIDを選びます。
+          資料の文章と、画像検査を選んだ場合はスライド画像を、指定した接続先へ送ります。ローカルで完結させる場合はローカルサーバーを指定してください。APIキーはこの画面のメモリ内だけで保持します。
         </p>
-        <div className="scroll-table">
-          <table>
-            <thead>
-              <tr>
-                <th>用途</th>
-                <th>モデル名・タグ</th>
-                <th>画像入力</th>
-                <th>モデル容量の目安</th>
-                <th>導入コマンド・公式情報</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>JP/ENスライド画像・レイアウト</td>
-                <td>
-                  <code>qwen2.5vl:7b</code>
-                </td>
-                <td>対応</td>
-                <td>約6.0GB</td>
-                <td>
-                  <code>ollama pull qwen2.5vl:7b</code>
-                  <br />
-                  <a
-                    href="https://ollama.com/library/qwen2.5vl:7b"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Qwen2.5-VL 7B公式
-                  </a>
-                </td>
-              </tr>
-              <tr>
-                <td>翻訳・用語・発表者ノート</td>
-                <td>
-                  <code>qwen2.5:7b</code>
-                </td>
-                <td>文章のみ</td>
-                <td>約4.7GB</td>
-                <td>
-                  <code>ollama pull qwen2.5:7b</code>
-                  <br />
-                  <a
-                    href="https://ollama.com/library/qwen2.5:7b"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Qwen2.5 7B公式
-                  </a>
-                </td>
-              </tr>
-              <tr>
-                <td>軽量な文章・ノート検査</td>
-                <td>
-                  <code>qwen2.5:3b</code>
-                </td>
-                <td>文章のみ</td>
-                <td>約1.9GB</td>
-                <td>
-                  <code>ollama pull qwen2.5:3b</code>
-                  <br />
-                  <a
-                    href="https://ollama.com/library/qwen2.5:3b"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Qwen2.5 3B公式
-                  </a>
-                </td>
-              </tr>
-              <tr>
-                <td>軽量な画像検査の候補</td>
-                <td>
-                  <code>qwen2.5vl:3b</code>
-                </td>
-                <td>対応</td>
-                <td>約3.2GB</td>
-                <td>
-                  <code>ollama pull qwen2.5vl:3b</code>
-                  <br />
-                  <a
-                    href="https://ollama.com/library/qwen2.5vl:3b"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Qwen2.5-VL 3B公式
-                  </a>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div className="settings-grid">
+          <label>
+            接続方式
+            <select
+              value={provider}
+              onChange={(e) => {
+                setProvider(e.target.value);
+                setBase(
+                  e.target.value === "ollama"
+                    ? "http://127.0.0.1:11434"
+                    : "http://127.0.0.1:1234/v1",
+                );
+                setModels([]);
+                setModel("");
+                setVision(false);
+                setInfo("");
+              }}
+            >
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI互換（LM Studio等）</option>
+            </select>
+          </label>
+          <label>
+            接続先URL
+            <input
+              value={base}
+              onChange={(e) => {
+                setBase(e.target.value);
+                setVision(false);
+              }}
+            />
+          </label>
+          <label>
+            APIキー（必要な接続先のみ）
+            <input
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            モデル名
+            <input
+              list="llm-models"
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                setVision(false);
+              }}
+            />
+            <datalist id="llm-models">
+              {models.map((m) => (
+                <option key={m.id} value={m.id} />
+              ))}
+            </datalist>
+          </label>
+          <label>
+            応答待ち上限（秒）
+            <input
+              type="number"
+              min="5"
+              max="86400"
+              value={timeout}
+              onChange={(e) => setTimeoutValue(+e.target.value)}
+            />
+          </label>
+          <label>
+            出力トークン上限
+            <input
+              type="number"
+              min="256"
+              max="8192000"
+              value={maxTokens}
+              onChange={(e) => setMaxTokens(+e.target.value)}
+            />
+          </label>
         </div>
         <p>
-          Ollamaは最新安定版を推奨します。
-          <a
-            href="https://ollama.com/library/qwen2.5vl"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Qwen2.5-VLの公式要件はOllama 0.7.0以上
-          </a>
-          です。LM Studioも最新安定版を利用し、
-          <a
-            href="https://lmstudio.ai/docs/developer/openai-compat"
-            target="_blank"
-            rel="noreferrer"
-          >
-            OpenAI互換のローカルサーバー
-          </a>
-          を起動してください。
+          出力トークンの設定可能上限は8,192,000です。実際の生成量はモデル・サーバーの出力上限と文脈長に依存します。応答待ちは1リクエストにつき最大86,400秒（24時間）、初期値は3,600秒（1時間）です。
         </p>
         <p>
-          容量はモデルファイルの目安で、実行時のRAM・VRAMとは別です。必要メモリは画像数・文脈長・量子化・実行環境によって増減します。上記の導入コマンドはOllama側で実行し、このアプリではモデルの自動ダウンロードは行いません。配布情報の確認日:
-          2026-11-17。
+          ページごとに画像はJP/ENの2枚をペアで送信します。画像・翻訳・ノートは1ページの応答を受け取って表示してから次へ進みます。全体の確認は最後にページ別結果を使い、画像は再送しません。
         </p>
-      </section>
-      <p>
-        資料の文章と、画像検査を選んだ場合はスライド画像を、指定した接続先へ送ります。ローカルで完結させる場合はローカルサーバーを指定してください。APIキーはこの画面のメモリ内だけで保持します。
-      </p>
-      <div className="settings-grid">
-        <label>
-          接続方式
-          <select
-            value={provider}
-            onChange={(e) => {
-              setProvider(e.target.value);
-              setBase(
-                e.target.value === "ollama"
-                  ? "http://127.0.0.1:11434"
-                  : "http://127.0.0.1:1234/v1",
-              );
-              setModels([]);
-              setModel("");
-              setVision(false);
-              setInfo("");
-            }}
+        <div className="toolbar">
+          <button disabled={working || !!running} onClick={loadModels}>
+            モデル一覧・接続確認
+          </button>
+          <button
+            disabled={!model || working || !!running}
+            onClick={checkModel}
           >
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI互換（LM Studio等）</option>
-          </select>
-        </label>
+            モデルの画像対応を確認
+          </button>
+          <span>{info}</span>
+        </div>
         <label>
-          接続先URL
           <input
-            value={base}
-            onChange={(e) => {
-              setBase(e.target.value);
-              setVision(false);
-            }}
+            type="checkbox"
+            checked={vision}
+            onChange={(e) => setVision(e.target.checked)}
           />
+          選択したモデルは画像入力に対応している
         </label>
-        <label>
-          APIキー（必要な接続先のみ）
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            autoComplete="off"
-          />
-        </label>
-        <label>
-          モデル名
-          <input
-            list="llm-models"
-            value={model}
-            onChange={(e) => {
-              setModel(e.target.value);
-              setVision(false);
-            }}
-          />
-          <datalist id="llm-models">
-            {models.map((m) => (
-              <option key={m.id} value={m.id} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          応答待ち上限（秒）
-          <input
-            type="number"
-            min="5"
-            max="86400"
-            value={timeout}
-            onChange={(e) => setTimeoutValue(+e.target.value)}
-          />
-        </label>
-        <label>
-          出力トークン上限
-          <input
-            type="number"
-            min="256"
-            max="8192000"
-            value={maxTokens}
-            onChange={(e) => setMaxTokens(+e.target.value)}
-          />
-        </label>
-      </div>
-      <p>
-        出力トークンの設定可能上限は8,192,000です。実際の生成量はモデル・サーバーの出力上限と文脈長に依存します。応答待ちは1リクエストにつき最大86,400秒（24時間）、初期値は3,600秒（1時間）です。
-      </p>
-      <p>
-        ページごとに画像はJP/ENの2枚をペアで送信します。画像・翻訳・ノートは1ページの応答を受け取って表示してから次へ進みます。全体の確認は最後にページ別結果を使い、画像は再送しません。
-      </p>
-      <div className="toolbar">
-        <button disabled={working || !!running} onClick={loadModels}>
-          モデル一覧・接続確認
-        </button>
-        <button disabled={!model || working || !!running} onClick={checkModel}>
-          モデルの画像対応を確認
-        </button>
-        <span>{info}</span>
-      </div>
-      <label>
-        <input
-          type="checkbox"
-          checked={vision}
-          onChange={(e) => setVision(e.target.checked)}
-        />
-        選択したモデルは画像入力に対応している
-      </label>
-      <fieldset>
-        <legend>検査内容</legend>
-        {Object.entries(labels).map(([task, label]) => (
-          <label key={task}>
-            <input
-              type="checkbox"
-              checked={tasks.includes(task)}
-              onChange={(e) =>
-                setTasks(
-                  e.target.checked
-                    ? [...tasks, task]
-                    : tasks.filter((t) => t !== task),
-                )
-              }
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
-      <label>
-        ページ範囲（空欄なら全ページ）
-        <input
-          placeholder="例: 1-5,8"
-          value={pages}
-          onChange={(e) => setPages(e.target.value)}
-        />
-      </label>
-      <p>
-        画像比較には画像対応モデルとスライド画像が必要です。画像が未生成なら「画像を生成」を押してください（Windows版PowerPointが必要です）。文章・ノート検査のみの場合は不要です。
-      </p>
-      <button
-        disabled={!job || renderStatus === "running" || working || !!running}
-        onClick={() => action(onRender)}
-      >
-        画像を生成
-      </button>{" "}
-      <span>画像: {renderStatus || "未生成"}</span>
-      <details>
-        <summary>用語集・公式表記の参照資料</summary>
-        <label>
-          用語集（例: 日本語 → 公式英語表記、プロダクト名、根拠URL）
-          <textarea
-            rows={5}
-            value={glossary}
-            onChange={(e) => setGlossary(e.target.value)}
-            maxLength={50000}
-          />
-        </label>
-        <label>
-          公式資料のURL
-          <input
-            value={referenceURL}
-            onChange={(e) => setReferenceURL(e.target.value)}
-            placeholder="https://公式サイト/..."
-          />
-        </label>
-        <button
-          disabled={working || references.length >= 10}
-          onClick={() =>
-            action(async () => {
-              const d = await (
-                await api("llm/reference", json({ url: referenceURL }))
-              ).json();
-              setReferenceText(d.text);
-              if (d.truncated)
-                setInfo(
-                  "資料の先頭2万文字を取得しました。必要な引用部分を確認してください。",
-                );
-            })
-          }
-        >
-          公式ページの文章を取得
-        </button>
-        <label>
-          根拠の引用文（手入力も可）
-          <textarea
-            rows={5}
-            value={referenceText}
-            onChange={(e) => setReferenceText(e.target.value)}
-            maxLength={20000}
-          />
-        </label>
-        <button
-          disabled={!referenceText.trim() || references.length >= 10}
-          onClick={() => {
-            setReferences([
-              ...references,
-              { url: referenceURL, text: referenceText },
-            ]);
-            setReferenceText("");
-            setReferenceURL("");
-          }}
-        >
-          参照資料に追加
-        </button>
-        <ul>
-          {references.map((r, i) => (
-            <li key={i}>
-              {r.url || "手入力の引用文"}（{r.text.length}文字）{" "}
-              <button
-                onClick={() =>
-                  setReferences(references.filter((_, j) => j !== i))
+        <fieldset>
+          <legend>検査内容</legend>
+          {Object.entries(labels).map(([task, label]) => (
+            <label key={task}>
+              <input
+                type="checkbox"
+                checked={tasks.includes(task)}
+                onChange={(e) =>
+                  setTasks(
+                    e.target.checked
+                      ? [...tasks, task]
+                      : tasks.filter((t) => t !== task),
+                  )
                 }
-              >
-                除外
-              </button>
-            </li>
+              />
+              {label}
+            </label>
           ))}
-        </ul>
+        </fieldset>
+        <label>
+          ページ範囲（空欄なら全ページ）
+          <input
+            placeholder="例: 1-5,8"
+            value={pages}
+            onChange={(e) => setPages(e.target.value)}
+          />
+        </label>
         <p>
-          モデル自身の知識だけで公式表記を確定せず、根拠がない項目は「未確認」とします。
+          画像比較には画像対応モデルとスライド画像が必要です。画像が未生成なら「画像を生成」を押してください（Windows版PowerPointが必要です）。文章・ノート検査のみの場合は不要です。
         </p>
-      </details>
-      <details>
-        <summary>既定／カスタムプロンプト</summary>
-        {Object.entries(labels).map(([task, label]) => (
-          <label key={task}>
-            {label}
+        <button
+          disabled={!job || renderStatus === "running" || working || !!running}
+          onClick={() => action(onRender)}
+        >
+          画像を生成
+        </button>{" "}
+        <span>画像: {renderStatus || "未生成"}</span>
+        <details>
+          <summary>用語集・公式表記の参照資料</summary>
+          <label>
+            用語集（例: 日本語 → 公式英語表記、プロダクト名、根拠URL）
             <textarea
               rows={5}
-              value={prompts[task] || ""}
-              onChange={(e) =>
-                setPrompts({ ...prompts, [task]: e.target.value })
-              }
+              value={glossary}
+              onChange={(e) => setGlossary(e.target.value)}
               maxLength={50000}
             />
-            <button
-              onClick={() => setPrompts({ ...prompts, [task]: defaults[task] })}
-            >
-              このプロンプトを既定に戻す
-            </button>
           </label>
-        ))}
+          <label>
+            公式資料のURL
+            <input
+              value={referenceURL}
+              onChange={(e) => setReferenceURL(e.target.value)}
+              placeholder="https://公式サイト/..."
+            />
+          </label>
+          <button
+            disabled={working || references.length >= 10}
+            onClick={() =>
+              action(async () => {
+                const d = await (
+                  await api("llm/reference", json({ url: referenceURL }))
+                ).json();
+                setReferenceText(d.text);
+                if (d.truncated)
+                  setInfo(
+                    "資料の先頭2万文字を取得しました。必要な引用部分を確認してください。",
+                  );
+              })
+            }
+          >
+            公式ページの文章を取得
+          </button>
+          <label>
+            根拠の引用文（手入力も可）
+            <textarea
+              rows={5}
+              value={referenceText}
+              onChange={(e) => setReferenceText(e.target.value)}
+              maxLength={20000}
+            />
+          </label>
+          <button
+            disabled={!referenceText.trim() || references.length >= 10}
+            onClick={() => {
+              setReferences([
+                ...references,
+                { url: referenceURL, text: referenceText },
+              ]);
+              setReferenceText("");
+              setReferenceURL("");
+            }}
+          >
+            参照資料に追加
+          </button>
+          <ul>
+            {references.map((r, i) => (
+              <li key={i}>
+                {r.url || "手入力の引用文"}（{r.text.length}文字）{" "}
+                <button
+                  onClick={() =>
+                    setReferences(references.filter((_, j) => j !== i))
+                  }
+                >
+                  除外
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p>
+            モデル自身の知識だけで公式表記を確定せず、根拠がない項目は「未確認」とします。
+          </p>
+        </details>
+        <details>
+          <summary>既定／カスタムプロンプト</summary>
+          {Object.entries(labels).map(([task, label]) => (
+            <label key={task}>
+              {label}
+              <textarea
+                rows={5}
+                value={prompts[task] || ""}
+                onChange={(e) =>
+                  setPrompts({ ...prompts, [task]: e.target.value })
+                }
+                maxLength={50000}
+              />
+              <button
+                onClick={() =>
+                  setPrompts({ ...prompts, [task]: defaults[task] })
+                }
+              >
+                このプロンプトを既定に戻す
+              </button>
+            </label>
+          ))}
+        </details>
       </details>
       <div className="toolbar">
         <button
@@ -853,49 +1085,44 @@ export function LLMPanel({
           <p aria-live="polite">
             {review.status}: {review.message} ／ モデル: {review.model}
           </p>
-          {review.results.map((r, i) => (
-            <article className="review-result" key={i}>
-              <h3>
-                {labels[r.task]} {r.page ? `${r.page}ページ` : ""}
-              </h3>
-              {r.warning && <p className="error">{r.warning}</p>}
-              <p className="preserve">{r.summary}</p>
-              <div className="scroll-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ページ・分類</th>
-                      <th>確認候補・根拠</th>
-                      <th>修正案・参照元</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.issues.map((issue: any, j: number) => (
-                      <tr key={j}>
-                        <td>
-                          {String(issue.page ?? "全体")} /{" "}
-                          {String(issue.category ?? "")} /{" "}
-                          {String(issue.severity ?? "")}
-                        </td>
-                        <td>
-                          {String(issue.description ?? "")}
-                          <p>{String(issue.evidence ?? "")}</p>
-                        </td>
-                        <td>
-                          {String(issue.suggestion ?? "")}
-                          <p>{String(issue.reference ?? "未確認")}</p>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <details>
-                <summary>モデルの応答全文</summary>
-                <pre>{r.raw}</pre>
-              </details>
-            </article>
-          ))}
+          <div className="toolbar">
+            <button
+              aria-pressed={scope === "page"}
+              onClick={() => setScope("page")}
+            >
+              ページ別レビュー
+            </button>
+            <button
+              aria-pressed={scope === "global"}
+              onClick={() => setScope("global")}
+            >
+              全体・一貫性レビュー（{globalResults.length}件）
+            </button>
+          </div>
+          {scope === "global" ? (
+            <section aria-label="全体レビュー">
+              {globalResults.length ? (
+                renderResults(globalResults)
+              ) : (
+                <p>全体レビューの結果はまだありません。</p>
+              )}
+            </section>
+          ) : (
+            <PageWorkspace
+              context={context}
+              counts={counts}
+              noteContent={renderResults(
+                pageResults.filter((r) => r.task === "notes"),
+              )}
+            >
+              {renderResults(pageResults.filter((r) => r.task !== "notes"))}
+              {!pageResults.length && (
+                <p>
+                  このページのレビュー結果はまだありません。処理状況または指定ページ範囲を確認してください。
+                </p>
+              )}
+            </PageWorkspace>
+          )}
         </>
       )}
     </section>

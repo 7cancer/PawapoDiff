@@ -626,3 +626,75 @@ summary {
 .mapping .scroll-table {
   max-height: 360px;
 }
+
+.page-workspace {
+  margin-top: 18px;
+  align-items: start;
+}
+.page-workspace nav {
+  max-height: 75vh;
+  overflow: auto;
+  position: sticky;
+  top: 12px;
+}
+.page-workspace nav button[aria-current="page"] {
+  background: #dbeafe;
+  color: #143b70;
+  font-weight: 700;
+}
+.page-viewer {
+  min-width: 0;
+  padding: 16px;
+}
+.page-media,
+.notes-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.page-media figure {
+  margin: 0;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 10px;
+  min-width: 0;
+}
+.page-media img {
+  width: 100%;
+  display: block;
+}
+.page-media figcaption {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.notes-pair > div {
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  padding: 12px;
+  background: #f8fafc;
+}
+.notes-pair pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  font-family: inherit;
+}
+.page-viewer table {
+  table-layout: fixed;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.page-viewer section {
+  margin-top: 20px;
+}
+@media (max-width: 760px) {
+  .page-media,
+  .notes-pair {
+    grid-template-columns: 1fr;
+  }
+  .page-workspace nav {
+    position: static;
+    max-height: 180px;
+  }
+}

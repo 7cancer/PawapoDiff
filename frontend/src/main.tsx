@@ -141,7 +141,13 @@ function App() {
   useEffect(() => {
     setActiveChange(null);
   }, [page, job, marks, mode, status?.result, filters]);
-  const [images, setImages] = useState<Record<string, string>>({});
+  const [imageState, setImageState] = useState<{
+    job: string;
+    page: number;
+    urls: Record<string, string>;
+  } | null>(null);
+  const images =
+    imageState?.job === job && imageState.page === page ? imageState.urls : {};
   useEffect(() => {
     if (!job) return;
     let cancelled = false;
@@ -173,7 +179,7 @@ function App() {
     if (status?.status !== "done") return;
     let cancelled = false;
     const urls: string[] = [];
-    setImages({});
+    setImageState(null);
     async function load() {
       try {
         const sides = [
@@ -190,7 +196,8 @@ function App() {
             return [s, url] as const;
           }),
         );
-        if (!cancelled) setImages(Object.fromEntries(entries));
+        if (!cancelled)
+          setImageState({ job, page, urls: Object.fromEntries(entries) });
         else urls.forEach(URL.revokeObjectURL);
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -214,7 +221,7 @@ function App() {
     setJob("");
     setBusy(true);
     setStatus(null);
-    setImages({});
+    setImageState(null);
     setPage(1);
     const data = new FormData();
     data.append("left", left);
@@ -868,11 +875,15 @@ function App() {
               download={download}
               job={job}
               result={status.consistency}
-            />
-            <MappingEditor
-              api={api}
-              job={job}
-              page={page}
+              context={{
+                page,
+                count: status.pages,
+                onPageChange: setPage,
+                images,
+                notes: status.result?.speaker_notes || [],
+                renderStatus: status.render_status,
+                onRender: () => action(generateImages),
+              }}
               onApply={(data) =>
                 setStatus({
                   ...status,
@@ -881,16 +892,6 @@ function App() {
                 })
               }
             />
-            <label>
-              対応付けのページ
-              <select value={page} onChange={(e) => setPage(+e.target.value)}>
-                {Array.from({ length: status.pages }, (_, i) => (
-                  <option key={i} value={i + 1}>
-                    {i + 1}ページ
-                  </option>
-                ))}
-              </select>
-            </label>
           </>
         )}
         <div hidden={activeTab !== "llm"}>
@@ -900,6 +901,15 @@ function App() {
             job={status?.status === "done" ? job : ""}
             renderStatus={status?.render_status}
             onRender={generateImages}
+            context={{
+              page,
+              count: status?.pages || 0,
+              onPageChange: setPage,
+              images,
+              notes: status?.result?.speaker_notes || [],
+              renderStatus: status?.render_status,
+              onRender: () => action(generateImages),
+            }}
           />
         </div>
         <footer>
